@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Logo Browser</title>
+    <style>
+      body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#0f172a; color:#e6eef8; margin:0; padding:16px }
+      .country { background:#0b1220; padding:8px; border-radius:6px; margin-bottom:8px; cursor:pointer }
+      .team { display:flex; gap:8px; align-items:center; padding:6px; border-radius:6px; background:#071026; margin-bottom:6px; cursor:pointer }
+      img { max-height:36px; max-width:36px }
+      .search { width:100%; padding:8px; margin-bottom:12px; border-radius:6px; border:1px solid #1f2a44; background:#071026; color:#e6eef8 }
+    </style>
+  </head>
+  <body>
+    <input id="search" class="search" placeholder="팀명 또는 나라 (영어로 입력)" />
+    <div id="content"></div>
+
+    <script>
+      async function loadData() {
+        try {
+          const [indexResp] = await Promise.all([
+            fetch('./data/team-index.json')
+          ]);
+          const index = await indexResp.json();
+          const synonyms = {};
+          return { index, synonyms };
+        } catch (e) {
+          document.getElementById('content').innerText = '데이터를 불러오는 데 실패했습니다.';
+          throw e;
+        }
+      }
+
+      function renderCountryList(index) {
+        const unique = Array.from(new Set(index.map(i=>i.country))).sort();
+        const el = document.getElementById('content');
+        el.innerHTML = '';
+        unique.forEach(c => {
+          const b = document.createElement('div');
+          b.className='country';
+          b.textContent = c;
+          b.onclick = () => renderTeamsForCountry(index, c);
+          el.appendChild(b);
+        });
+      }
+
+      function renderTeamsForCountry(index, country) {
+        const el = document.getElementById('content');
+        el.innerHTML = '';
+        const back = document.createElement('div');
+        back.className='country';
+        back.textContent='← 뒤로';
+        back.onclick = () => renderCountryList(index);
+        el.appendChild(back);
+
+        index.filter(i=>i.country===country).forEach(t=>{
+          const d = document.createElement('div');
+          d.className='team';
+          d.onclick = ()=>{
+            // include target param if present in URL
+            const params = new URLSearchParams(window.location.search);
+            const target = params.get('target');
+            window.opener.postMessage({ type:'team-selected', team: t, target }, '*');
+            window.close();
+          };
+          const img = document.createElement('img');
+          img.src = t.logos.png || t.logos.svg || '';
+          const span = document.createElement('div'); span.textContent = t.englishName;
+          d.appendChild(img); d.appendChild(span);
+          el.appendChild(d);
+        });
+      }
+
+      (async ()=>{
+        const { index, synonyms } = await loadData();
+        const input = document.getElementById('search');
+        renderCountryList(index);
+        input.addEventListener('input', ()=>{
+          const q = input.value.trim().toLowerCase();
+          if (!q) { renderCountryList(index); return; }
+          // alias lookup
+          const mapped = synonyms && synonyms[q] ? synonyms[q] : null;
+          if (mapped) {
+            // find entries by slug or id
+            const matches = index.filter(t => t.slug===mapped || t.id.endsWith('/'+mapped) || t.englishName.toLowerCase()===mapped);
+            renderMatches(matches);
+            return;
+          }
+
+          // country name exact
+          const countryMatches = index.filter(t => t.country===q || t.country===q.replace(/\s+/g,'-'));
+          if (countryMatches.length>0) { renderMatches(countryMatches); return; }
+
+          // simple contains match
+          const contains = index.filter(t => t.slug.includes(q) || t.englishName.toLowerCase().includes(q));
+          renderMatches(contains);
+        });
+
+        function renderMatches(arr) {
+          const el = document.getElementById('content'); el.innerHTML='';
+          if (!arr.length) { el.textContent='검색 결과 없음'; return; }
+            arr.slice(0,200).forEach(t=>{
+            const d = document.createElement('div'); d.className = 'team';
+            d.onclick = ()=>{
+              const params = new URLSearchParams(window.location.search);
+              const target = params.get('target');
+              window.opener.postMessage({ type:'team-selected', team: t, target }, '*');
+              window.close();
+            };
+            const img = document.createElement('img'); img.src = t.logos.png || t.logos.svg || '';
+            const span = document.createElement('div'); span.textContent = t.englishName + ' (' + t.country + ')';
+            d.appendChild(img); d.appendChild(span); el.appendChild(d);
+          });
+        }
+
+      })();
+    </script>
+  </body>
+</html>
