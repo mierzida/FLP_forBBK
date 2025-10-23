@@ -574,7 +574,7 @@ export default function App() {
         </div>
 
         {/* Middle */}
-        <div className="flex gap-4">
+        <div className="flex gap-0">
           {verticalMode ? (
             // Full-field vertical mode: single full-size field with both teams inside
             <div className="w-[506px] h-full rounded-2xl overflow-hidden p-6">
@@ -665,7 +665,7 @@ export default function App() {
             </div>
           ) : (
             <>
-              <div className="w-[506px] h-full rounded-2xl overflow-visible p-6" style={{ position: 'relative' }}>
+              <div className="w-[506px] h-full rounded-2xl overflow-visible p-6" style={{ position: 'relative', transform: 'translateX(20px)' }}>
                 <FootballField fieldRef={fieldRef}>
                   {players.map((player, index) => {
                     const defaultPos = playerPositions[index];
@@ -704,7 +704,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="w-[506px] h-full rounded-2xl overflow-visible p-6" style={{ position: 'relative' }}>
+              <div className="w-[506px] h-full rounded-2xl overflow-visible p-6" style={{ position: 'relative', transform: 'translateX(-20px)' }}>
                 <FootballField fieldRef={fieldRefB}>
                   {playersB.map((player, index) => {
                     const defaultPos = playerPositionsB[index];

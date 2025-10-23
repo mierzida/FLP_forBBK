@@ -30,7 +30,17 @@ export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({ 
         <UniformIcon color={color} number={number} size={sizeVal} compact={compact} fontSizeOverride={fontSizeOverride} />
       </div>
       <div className="bg-white/90 px-2 py-0.5 rounded shadow-sm" style={{ minWidth: compact ? 64 : 80 }}>
-        <p className={`${nameClass} truncate`} style={{ maxWidth: compact ? 88 : 120 }}>
+        <p
+          className={`${nameClass} truncate font-bold`}
+          style={{
+            maxWidth: compact ? 88 : 120,
+            fontFamily: "NanumSquareNeo, ui-sans-serif, system-ui",
+            fontWeight: 800,
+            // for variable-font variants
+            fontVariationSettings: "'wght' 800",
+            fontSize: compact ? '14px' : '16px',
+          }}
+        >
           {name || '선수명'}
         </p>
       </div>
