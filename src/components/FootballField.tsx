@@ -26,20 +26,20 @@ export const FootballField: React.FC<FootballFieldProps> = memo(function Footbal
             <circle cx="50%" cy="12%" r="0.6%" fill="white" />
             <rect x="10%" y="80%" width="80%" height="18%" fill="none" stroke="white" strokeWidth="2" />
             <rect x="25%" y="90%" width="50%" height="8%" fill="none" stroke="white" strokeWidth="2" />
-            <circle cx="50%" cy="88%" r="0.6%" fill="white" />
+            
           </>
         ) : (
           <>
             <line x1="2%" y1="2%" x2="98%" y2="2%" stroke="white" strokeWidth="2" />
             <line x1="2%" y1="2%" x2="2%" y2="98%" stroke="white" strokeWidth="2" />
             <line x1="98%" y1="2%" x2="98%" y2="98%" stroke="white" strokeWidth="2" />
-            <rect x="25%" y="2%" width="50%" height="14%" fill="none" stroke="white" strokeWidth="2" />
-            <rect x="37%" y="2%" width="26%" height="7%" fill="none" stroke="white" strokeWidth="2" />
+            <rect x="25%" y="84%" width="50%" height="14%" fill="none" stroke="white" strokeWidth="2" />
+            <rect x="37%" y="91%" width="26%" height="7%" fill="none" stroke="white" strokeWidth="2" />
             <path d="M 25% 16% Q 50% 20% 75% 16%" fill="none" stroke="white" strokeWidth="2" />
-            <circle cx="50%" cy="12%" r="0.6%" fill="white" />
+            <circle cx="50%" cy="2%" r="0.6%" fill="white" />
             <line x1="2%" y1="98%" x2="98%" y2="98%" stroke="white" strokeWidth="2" />
             <path d="M 20% 98% A 30 30 0 0 0 80% 98%" fill="none" stroke="white" strokeWidth="2" />
-            <circle cx="50%" cy="98%" r="0.8%" fill="white" />
+            <circle cx="50%" cy="0%" r="15%" fill="none" stroke="white" strokeWidth="2" />
           </>
         )}
       </svg>

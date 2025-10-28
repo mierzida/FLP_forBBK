@@ -17,6 +17,8 @@ import ControlButton from './components/ControlButton';
 interface Player {
   number: string;
   name: string;
+  yellowCard?: boolean;
+  redCard?: boolean;
 }
 
 interface Formation {
@@ -60,11 +62,21 @@ function calcPositions(formation: Formation): { x: number; y: number }[] {
     let computedY = center + (rawY - center) * 0.8; // compress toward center
     computedY = Math.max(0, computedY - 3.5); // slight lift
 
-    const isLastLine = lineIndex === formation.lines.length - 1;
     let yForLine = computedY;
-    if (lineIndex === 0) yForLine = 8; // GK
-    else if (lineIndex === 1) yForLine = 30; // DEF
-    else if (isLastLine) yForLine = 85; // ATT
+    
+    if (lineIndex === 0) {
+      yForLine = 90; // GK (fixed at bottom)
+    } else {
+      // Calculate evenly spaced positions for all other lines
+      const totalLines = formation.lines.length;
+      const topY = 10;    // ATT position (top)
+      const bottomY = 90; // GK position (bottom)
+      const spacing = (bottomY - topY) / (totalLines - 1);
+      
+      // For lineIndex 1,2,3... calculate from top to bottom
+      // Last line (highest lineIndex) should be at topY (15)
+      yForLine = bottomY - (spacing * lineIndex);
+    }
 
     for (let i = 0; i < lineCount; i++) {
       const baseX = ((i + 1) / (lineCount + 1)) * 100;
@@ -105,9 +117,9 @@ export default function App() {
 
   const [verticalMode, setVerticalMode] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
-  const [editingPlayer, setEditingPlayer] = useState<Player>({ number: '', name: '' });
+  const [editingPlayer, setEditingPlayer] = useState<Player>({ number: '', name: '', yellowCard: false, redCard: false });
   const [selectedPlayerB, setSelectedPlayerB] = useState<number | null>(null);
-  const [editingPlayerB, setEditingPlayerB] = useState<Player>({ number: '', name: '' });
+  const [editingPlayerB, setEditingPlayerB] = useState<Player>({ number: '', name: '', yellowCard: false, redCard: false });
 
   const [showFormationA, setShowFormationA] = useState(false);
   const [showFormationB, setShowFormationB] = useState(false);
@@ -370,9 +382,33 @@ export default function App() {
     }
   };
 
+  const handleSwapTeams = () => {
+    // 팀 A와 팀 B의 모든 정보를 서로 교환
+    const tempFormation = formation;
+    const tempPlayers = players;
+    const tempUniformColor = uniformColor;
+    const tempTeamName = teamNameA;
+    const tempTeamLogo = teamLogoA;
+    const tempOverrides = overrides;
+
+    setFormation(formationB);
+    setPlayers(playersB);
+    setUniformColor(uniformColorB);
+    setTeamNameA(teamNameB);
+    setTeamLogoA(teamLogoB);
+    setOverrides(overridesB);
+
+    setFormationB(tempFormation);
+    setPlayersB(tempPlayers);
+    setUniformColorB(tempUniformColor);
+    setTeamNameB(tempTeamName);
+    setTeamLogoB(tempTeamLogo);
+    setOverridesB(tempOverrides);
+  };
+
   /***************************
    * Pointer / Drag Handlers *
-   ***************************/
+   ***************************/ 
   const toPercent = useCallback(
     (clientX: number, clientY: number, ref?: React.RefObject<HTMLDivElement | null>) => {
       const el = (ref?.current ?? fieldRef.current);
@@ -514,6 +550,7 @@ export default function App() {
   <div style={{ position: 'fixed', top: 13, left: 200, zIndex: 70, pointerEvents: 'auto' }} className="app-no-drag">
           <div className="flex gap-2 items-center">
             <Button onClick={() => setVerticalMode((s) => !s)} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>{verticalMode ? '가로모드' : '세로모드'}</Button>
+            <Button onClick={handleSwapTeams} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }} title="팀 A와 팀 B 정보 교환">⇄ 팀교환</Button>
             {/* Placeholder SAVE/LOAD buttons (UI only) */}
             <Button onClick={handleSaveJSON} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>SAVE</Button>
             <Button onClick={handleLoadJSON} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>LOAD</Button>
@@ -605,7 +642,7 @@ export default function App() {
                         handlePlayerClick(index);
                       }}
                     >
-                      <PlayerCard number={player.number} name={player.name} color={uniformColor} onClick={() => handlePlayerClick(index)} compact size={42} fontSizeOverride={120} />
+                      <PlayerCard number={player.number} name={player.name} color={uniformColor} onClick={() => handlePlayerClick(index)} compact size={42} fontSizeOverride={120} yellowCard={player.yellowCard} redCard={player.redCard} />
                     </div>
                   );
                 })}
@@ -637,7 +674,7 @@ export default function App() {
                         handlePlayerClickB(index);
                       }}
                     >
-                      <PlayerCard number={player.number} name={player.name} color={uniformColorB} onClick={() => handlePlayerClickB(index)} compact size={42} fontSizeOverride={120} />
+                      <PlayerCard number={player.number} name={player.name} color={uniformColorB} onClick={() => handlePlayerClickB(index)} compact size={42} fontSizeOverride={120} yellowCard={player.yellowCard} redCard={player.redCard} />
                     </div>
                   );
                 })}
@@ -688,7 +725,7 @@ export default function App() {
                           handlePlayerClick(index);
                         }}
                       >
-                        <PlayerCard number={player.number} name={player.name} color={uniformColor} onClick={() => handlePlayerClick(index)} size={56} />
+                        <PlayerCard number={player.number} name={player.name} color={uniformColor} onClick={() => handlePlayerClick(index)} size={56} yellowCard={player.yellowCard} redCard={player.redCard} />
                       </div>
                     );
                   })}
@@ -727,7 +764,7 @@ export default function App() {
                           handlePlayerClickB(index);
                         }}
                       >
-                        <PlayerCard number={player.number} name={player.name} color={uniformColorB} onClick={() => handlePlayerClickB(index)} size={56} />
+                        <PlayerCard number={player.number} name={player.name} color={uniformColorB} onClick={() => handlePlayerClickB(index)} size={56} yellowCard={player.yellowCard} redCard={player.redCard} />
                       </div>
                     );
                   })}
@@ -764,6 +801,43 @@ export default function App() {
               <Label htmlFor="edit-name">이름</Label>
               <Input id="edit-name" value={editingPlayer.name} onChange={(e) => setEditingPlayer({ ...editingPlayer, name: e.target.value })} placeholder="선수명" />
             </div>
+            <div className="space-y-2">
+              <Label>카드 상태</Label>
+              <div className="flex gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingPlayer({ ...editingPlayer, yellowCard: !editingPlayer.yellowCard, redCard: editingPlayer.yellowCard ? false : editingPlayer.redCard })}
+                  className={`flex-1 h-12 font-semibold transition-all duration-200 ${
+                    editingPlayer.yellowCard 
+                      ? 'bg-yellow-400 hover:bg-yellow-500 text-black border-yellow-600 shadow-lg scale-105' 
+                      : 'bg-white hover:bg-yellow-50 text-gray-700 border-yellow-300 hover:border-yellow-400'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded ${editingPlayer.yellowCard ? 'bg-yellow-600' : 'bg-yellow-200'}`}></span>
+                    옐로우 카드
+                    {editingPlayer.yellowCard && <span className="text-xs">✓</span>}
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingPlayer({ ...editingPlayer, redCard: !editingPlayer.redCard, yellowCard: editingPlayer.redCard ? false : editingPlayer.yellowCard })}
+                  className={`flex-1 h-12 font-semibold transition-all duration-200 ${
+                    editingPlayer.redCard 
+                      ? 'bg-red-500 hover:bg-red-600 text-black border-red-700 shadow-lg scale-105' 
+                      : 'bg-white hover:bg-red-50 text-black hover:text-black border-red-300 hover:border-red-400'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded ${editingPlayer.redCard ? 'bg-red-700' : 'bg-red-200'}`}></span>
+                    레드 카드
+                    {editingPlayer.redCard && <span className="text-xs">✓</span>}
+                  </span>
+                </Button>
+              </div>
+            </div>
             <Button onClick={handleSavePlayer} className="w-full">저장</Button>
           </div>
         </DialogContent>
@@ -782,6 +856,43 @@ export default function App() {
             <div className="space-y-2">
               <Label htmlFor="edit-name-b">이름</Label>
               <Input id="edit-name-b" value={editingPlayerB.name} onChange={(e) => setEditingPlayerB({ ...editingPlayerB, name: e.target.value })} placeholder="선수명" />
+            </div>
+            <div className="space-y-2">
+              <Label>카드 상태</Label>
+              <div className="flex gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingPlayerB({ ...editingPlayerB, yellowCard: !editingPlayerB.yellowCard, redCard: editingPlayerB.yellowCard ? false : editingPlayerB.redCard })}
+                  className={`flex-1 h-12 font-semibold transition-all duration-200 ${
+                    editingPlayerB.yellowCard 
+                      ? 'bg-yellow-400 hover:bg-yellow-500 text-black border-yellow-600 shadow-lg scale-105' 
+                      : 'bg-white hover:bg-yellow-50 text-gray-700 border-yellow-300 hover:border-yellow-400'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded ${editingPlayerB.yellowCard ? 'bg-yellow-600' : 'bg-yellow-200'}`}></span>
+                    옐로우 카드
+                    {editingPlayerB.yellowCard && <span className="text-xs">✓</span>}
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingPlayerB({ ...editingPlayerB, redCard: !editingPlayerB.redCard, yellowCard: editingPlayerB.redCard ? false : editingPlayerB.yellowCard })}
+                  className={`flex-1 h-12 font-semibold transition-all duration-200 ${
+                    editingPlayerB.redCard 
+                      ? 'bg-red-500 hover:bg-red-600 text-black border-red-700 shadow-lg scale-105' 
+                      : 'bg-white hover:bg-red-50 text-black hover:text-black border-red-300 hover:border-red-400'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded ${editingPlayerB.redCard ? 'bg-red-700' : 'bg-red-200'}`}></span>
+                    레드 카드
+                    {editingPlayerB.redCard && <span className="text-xs">✓</span>}
+                  </span>
+                </Button>
+              </div>
             </div>
             <Button onClick={handleSavePlayerB} className="w-full">저장</Button>
           </div>

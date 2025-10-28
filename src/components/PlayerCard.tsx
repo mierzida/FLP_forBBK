@@ -13,11 +13,20 @@ export interface PlayerCardProps {
   compact?: boolean;
   size?: number; // px
   fontSizeOverride?: number;
+  yellowCard?: boolean;
+  redCard?: boolean;
 }
 
-export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({ number, name, color, onClick, compact = false, size, fontSizeOverride }) {
+export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({ number, name, color, onClick, compact = false, size, fontSizeOverride, yellowCard = false, redCard = false }) {
   const sizeVal = size ?? (compact ? 36 : 48);
   const nameClass = compact ? 'text-xs' : 'text-sm';
+  
+  // 카드 상태에 따른 배경색 결정
+  const getCardBackgroundStyle = () => {
+    if (redCard) return { backgroundColor: '#ef4444', color: '#ffffff' }; // red-500, white text
+    if (yellowCard) return { backgroundColor: '#fbbf24', color: '#000000' }; // yellow-400, black text
+    return { backgroundColor: 'rgba(255, 255, 255, 0.9)', color: '#000000' }; // white/90, black text
+  };
 
   return (
     <button
@@ -29,7 +38,10 @@ export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({ 
       <div style={{ width: sizeVal, height: sizeVal, minWidth: sizeVal, minHeight: sizeVal }}>
         <UniformIcon color={color} number={number} size={sizeVal} compact={compact} fontSizeOverride={fontSizeOverride} />
       </div>
-      <div className="bg-white/90 px-2 py-0.5 rounded shadow-sm" style={{ minWidth: compact ? 64 : 80 }}>
+      <div className="px-2 py-0.5 rounded shadow-sm" style={{ 
+        minWidth: compact ? 64 : 80,
+        ...getCardBackgroundStyle()
+      }}>
         <p
           className={`${nameClass} truncate font-bold`}
           style={{
