@@ -19,6 +19,7 @@ interface Player {
   name: string;
   yellowCard?: boolean;
   redCard?: boolean;
+  goals?: number;
 }
 
 interface Formation {
@@ -80,7 +81,8 @@ function calcPositions(formation: Formation): { x: number; y: number }[] {
     }
 
     for (let i = 0; i < lineCount; i++) {
-      const baseX = ((i + 1) / (lineCount + 1)) * 100;
+      // i=0(API의 첫 선수)이 오른쪽(75%~80%)에 오도록 역순 계산 적용
+      const baseX = ((lineCount - i) / (lineCount + 1)) * 100;
       const x = 50 + (baseX - 50) * 1.2; // widen spacing by 20%
       positions.push({ x, y: yForLine });
     }
@@ -313,6 +315,11 @@ export default function App() {
   const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const refreshIntervalRef = useRef<number | null>(null);
+
+
+  // 프리미어리그, 분데스리가 위주로 필터링
+  const [activeTab, setActiveTab] = useState<'UPCOMING' | 'LIVE' | 'FINISHED'>('LIVE');
+  const LEAGUE_IDS = [39, 78]; // 39: EPL, 78: Bundesliga 1
 
   /********
    * Refs *
@@ -712,11 +719,11 @@ export default function App() {
     setOverridesB(tempOverrides);
   };
 
-  /***************************
+/***************************
    * API-Football Integration *
    ***************************/
   
-  // 실시간 및 2시간 이내 시작 예정 경기 목록 가져오기
+  // 실시간, 예정, 종료 경기 목록 통합 가져오기 (EPL, 분데스리가 필터 적용)
   const loadLiveMatches = async () => {
     if (!apiKey.trim()) {
       alert('API 키를 입력하세요');
@@ -724,52 +731,30 @@ export default function App() {
     }
 
     setIsLoadingMatches(true);
+
     try {
-      // 1. 오늘 날짜의 모든 경기 가져오기
-      const today = new Date().toISOString().split('T')[0];
-      const response = await fetch(`https://v3.football.api-sports.io/fixtures?date=${today}`, {
-        headers: {
-          'x-apisports-key': apiKey
-        }
+     // 1. 오늘 날짜 계산 (ISO 포맷: YYYY-MM-DD)
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      // 2. 오늘 날짜의 모든 경기 요청
+      const response = await fetch(`https://v3.football.api-sports.io/fixtures?date=${todayStr}`, {
+        headers: { 'x-apisports-key': apiKey }
       });
 
       const data = await response.json();
-      
-      if (data.response && data.response.length > 0) {
-        const now = new Date();
-        const twoHoursLater = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 현재 시간 + 2시간
+      const allMatches = data.response || [];
 
-        // 2. 필터링 로직: [진행 중인 경기] + [2시간 이내 시작 예정 경기]
-        const filteredMatches = data.response.filter((match: any) => {
-          const startTime = new Date(match.fixture.timestamp * 1000); // API의 timestamp는 초 단위
-          const status = match.fixture.status.short;
+      if (allMatches.length > 0) {
+        // 시간 순으로 정렬 (보기 편하게)
+        allMatches.sort((a: any, b: any) => a.fixture.timestamp - b.fixture.timestamp);
 
-          // 'includes' 대신 'indexOf'를 사용하여 하위 호환성 확보
-          // 진행 중인 상태 코드 (1H, HT, 2H, ET, P, BT)
-          const liveStatuses = ["1H", "HT", "2H", "ET", "P", "BT"];
-          const isLive = liveStatuses.indexOf(status) !== -1;
-          
-          // 시작 전(NS)이면서 현재~2시간 이내인 경기
-          const isUpcomingSoon = (status === "NS") && (startTime >= now && startTime <= twoHoursLater);
-
-          return isLive || isUpcomingSoon;
-        });
-
-        // 3. 시간 순서대로 정렬
-        filteredMatches.sort((a: any, b: any) => a.fixture.timestamp - b.fixture.timestamp);
-
-        if (filteredMatches.length > 0) {
-          setLiveMatches(filteredMatches);
-        } else {
-          setLiveMatches([]);
-          alert('현재 진행 중이거나 2시간 이내 예정된 경기가 없습니다');
-        }
+        setLiveMatches(allMatches);
       } else {
         setLiveMatches([]);
         alert('오늘 예정된 경기 데이터가 없습니다');
       }
     } catch (error) {
-      console.error('Failed to load live/upcoming matches:', error);
+      console.error('Failed to load matches:', error);
       alert('경기 목록을 불러오는데 실패했습니다');
     } finally {
       setIsLoadingMatches(false);
@@ -780,6 +765,7 @@ export default function App() {
   const parseFormation = (formationStr: string): number[] => {
     if (!formationStr) return [1, 4, 3, 3];
     
+    // API 데이터는 "4-3-3" 형식이므로 하이픈으로 분리
     const parts = formationStr.split('-').map(n => parseInt(n, 10));
     return [1, ...parts]; // 골키퍼 1명 추가
   };
@@ -809,51 +795,68 @@ export default function App() {
 
       const fixtureData = await fixtureResponse.json();
       const latestFixture = fixtureData.response[0];
-      
+      const events = latestFixture.events || []; // 경기 내 모든 이벤트(골, 카드 등) 가져오기
+
       if (lineupData.response && lineupData.response.length >= 2) {
         const homeLineup = lineupData.response[0];
         const awayLineup = lineupData.response[1];
 
+        // 🔍 터미널 디버깅: 경기 내 모든 골 이벤트 추출 및 로깅
+        const allGoalEvents = events.filter((ev: any) => ev.type === 'Goal' && ev.detail !== 'Missed Penalty');
+        console.log("------- ⚽ 경기 득점 데이터 매칭 시작 -------");
+        if (allGoalEvents.length === 0) console.log("기록된 득점 이벤트가 없습니다.");
+
+        // 헬퍼 함수: 선수 매핑 및 2중 매칭 로직 (ID + 이름)
+        const mapPlayersWithLog = (startXI: any[], teamName: string) => startXI.map((p: any, idx: number) => {
+          const pId = p.player.id;
+          const pName = p.player.name;
+
+          // 💡 득점 매칭: ID가 일치하거나 이름이 동일한 경우 합산
+          const goalCount = events.filter((ev: any) => 
+            ev.type === 'Goal' && ev.detail !== 'Missed Penalty' &&
+            (String(ev.player.id) === String(pId) || (pName && ev.player.name === pName))
+          ).length;
+
+          if (goalCount > 0) {
+            console.log(`🎯 [득점자 확인] ${teamName} | ${pName} | ${goalCount}골`);
+          }
+
+          // 카드 매칭
+          const hasYellow = events.some((ev: any) => 
+            ev.type === 'Card' && ev.detail.includes('Yellow Card') && (String(ev.player.id) === String(pId) || ev.player.name === pName)
+          );
+          const hasRed = events.some((ev: any) => 
+            ev.type === 'Card' && ev.detail.includes('Red Card') && (String(ev.player.id) === String(pId) || ev.player.name === pName)
+          );
+
+          return {
+            number: p.player.number?.toString() || (idx + 1).toString(),
+            name: pName || `선수 ${idx + 1}`,
+            yellowCard: hasYellow,
+            redCard: hasRed,
+            goals: goalCount
+          };
+        });
+
         // 홈팀 (팀 A) 설정
         const homeFormationStr = homeLineup.formation || '4-3-3';
-        const homeFormationLines = parseFormation(homeFormationStr);
-        const homeFormation: Formation = {
-          name: homeFormationStr,
-          lines: homeFormationLines
-        };
-
-        const homePlayers = homeLineup.startXI.map((p: any, idx: number) => ({
-          number: p.player.number?.toString() || (idx + 1).toString(),
-          name: p.player.name || `선수 ${idx + 1}`,
-          yellowCard: false,
-          redCard: false
-        }));
+        const homePlayers = mapPlayersWithLog(homeLineup.startXI, "HOME");
+        const homeFormation: Formation = { name: homeFormationStr, lines: parseFormation(homeFormationStr) };
 
         // 어웨이팀 (팀 B) 설정
         const awayFormationStr = awayLineup.formation || '4-3-3';
-        const awayFormationLines = parseFormation(awayFormationStr);
-        const awayFormation: Formation = {
-          name: awayFormationStr,
-          lines: awayFormationLines
-        };
+        const awayPlayers = mapPlayersWithLog(awayLineup.startXI, "AWAY");
+        const awayFormation: Formation = { name: awayFormationStr, lines: parseFormation(awayFormationStr) };
 
-        const awayPlayers = awayLineup.startXI.map((p: any, idx: number) => ({
-          number: p.player.number?.toString() || (idx + 1).toString(),
-          name: p.player.name || `선수 ${idx + 1}`,
-          yellowCard: false,
-          redCard: false
-        }));
+        console.log("---------------------------------------");
 
-        // 팀 로고 설정 (API에서 제공하는 URL 사용)
+        // 팀 로고 설정
         const homeLogoData = {
           id: `api/${homeTeam.id}`,
           slug: homeTeam.name.toLowerCase().replace(/\s+/g, '-'),
           country: homeLineup.team.country || 'unknown',
           englishName: homeTeam.name,
-          logos: {
-            svg: null,
-            png: homeTeam.logo // API에서 제공하는 로고 URL
-          }
+          logos: { svg: null, png: homeTeam.logo }
         };
 
         const awayLogoData = {
@@ -861,10 +864,7 @@ export default function App() {
           slug: awayTeam.name.toLowerCase().replace(/\s+/g, '-'),
           country: awayLineup.team.country || 'unknown',
           englishName: awayTeam.name,
-          logos: {
-            svg: null,
-            png: awayTeam.logo // API에서 제공하는 로고 URL
-          }
+          logos: { svg: null, png: awayTeam.logo }
         };
 
         // 상태 업데이트
@@ -872,59 +872,42 @@ export default function App() {
         setPlayers(homePlayers);
         setTeamNameA(homeTeam.name);
         setTeamLogoA(homeLogoData);
-        if (!isAutoRefresh) setOverrides({}); // 자동 갱신 시에는 위치 유지
+        if (!isAutoRefresh) setOverrides({});
 
         setFormationB(awayFormation);
         setPlayersB(awayPlayers);
         setTeamNameB(awayTeam.name);
         setTeamLogoB(awayLogoData);
-        if (!isAutoRefresh) setOverridesB({}); // 자동 갱신 시에는 위치 유지
+        if (!isAutoRefresh) setOverridesB({});
 
-        // 최신 스코어 및 경기 시간 설정
         const newScoreA = latestFixture.goals.home || 0;
         const newScoreB = latestFixture.goals.away || 0;
-        const matchElapsedMinutes = latestFixture.fixture.status.elapsed; // 경기 시간 (분)
-        const matchElapsedFormatted = formatMatchTime(matchElapsedMinutes); // MM:SS 형식으로 변환
-        const matchStatus = latestFixture.fixture.status.short; // 경기 상태 (1H, HT, 2H, ET, FT 등)
+        const matchElapsedFormatted = formatMatchTime(latestFixture.fixture.status.elapsed);
+        const matchStatus = latestFixture.fixture.status.short;
         
         setScoreA(newScoreA);
         setScoreB(newScoreB);
 
-        // 데이터를 UDP로 즉시 전송
+        // 데이터 전송
         setTimeout(() => {
           broadcastCurrentPlayerPositions(
-            homeFormation,
-            awayFormation,
-            homePlayers,
-            awayPlayers,
-            isAutoRefresh ? overrides : {},
-            isAutoRefresh ? overridesB : {},
-            verticalMode,
-            newScoreA,
-            newScoreB,
-            homeTeam.name,
-            awayTeam.name,
-            homeLogoData,
-            awayLogoData,
-            matchElapsedFormatted,
-            matchStatus,
-            electronAPI
+            homeFormation, awayFormation, homePlayers, awayPlayers,
+            isAutoRefresh ? overrides : {}, isAutoRefresh ? overridesB : {},
+            verticalMode, newScoreA, newScoreB, homeTeam.name, awayTeam.name,
+            homeLogoData, awayLogoData, matchElapsedFormatted, matchStatus, electronAPI
           );
         }, 100);
 
         if (!isAutoRefresh) {
-          // 처음 로드 시에만 자동 갱신 활성화 및 다이얼로그 닫기
           setSelectedFixtureId(fixtureId);
           setAutoRefreshEnabled(true);
           setShowLiveMatches(false);
-          alert(`${homeTeam.name} vs ${awayTeam.name} 라인업이 로드되었습니다\n30초마다 자동 갱신됩니다`);
+          alert(`${homeTeam.name} vs ${awayTeam.name} 라인업 로드 완료 (30초 자동갱신)`);
         } else {
-          console.log(`🔄 자동 갱신: ${homeTeam.name} ${newScoreA} - ${newScoreB} ${awayTeam.name} → UDP 전송 완료`);
+          console.log(`🔄 자동 갱신 완료: ${homeTeam.name} vs ${awayTeam.name}`);
         }
       } else {
-        if (!isAutoRefresh) {
-          alert('라인업 정보를 찾을 수 없습니다');
-        }
+        if (!isAutoRefresh) alert('라인업 정보를 찾을 수 없습니다.');
       }
     } catch (error) {
       console.error('Failed to load lineup:', error);
@@ -1158,9 +1141,9 @@ export default function App() {
 
       <div className="flex gap-6 h-[700px] max-h-[90vh]" style={{ height: 700, marginTop: 100 }}>
         {/* Banner */}
-  <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', width: 900, height: 100, zIndex: 65 }}>
+  <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', width: 900, height: 100, zIndex: '1 !important' as any }}>
           <div style={{ width: '100%', height: '100%', background: 'transparent', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', width: '900px', height: '100px', borderRadius: 10, overflow: 'hidden', pointerEvents: 'none', zIndex: 64 }}>
+            <div style={{ position: 'absolute', width: '900px', height: '100px', borderRadius: 10, overflow: 'hidden', pointerEvents: 'none', zIndex: '0 !important' as any }}>
               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))', backdropFilter: 'blur(6px) saturate(120%)', WebkitBackdropFilter: 'blur(6px) saturate(120%)', border: '1px solid rgba(255,255,255,0.06)' }} />
               <svg width="100%" height="100%" viewBox="0 0 100 12" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, opacity: 0.06 }}>
                 <defs>
@@ -1172,7 +1155,7 @@ export default function App() {
               </svg>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', position: 'relative', zIndex: 65 }}>
+            <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', position: 'relative', zIndex: '1 !important' as any }}>
               {/* Left: Team A */}
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 12, paddingLeft: 18 }}>
                 <div style={{ width: 72, height: 72, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1241,7 +1224,16 @@ export default function App() {
                         handlePlayerClick(index);
                       }}
                     >
-                      <PlayerCard number={player.number} name={player.name} color={uniformColor} onClick={() => handlePlayerClick(index)} compact size={42} fontSizeOverride={120} yellowCard={player.yellowCard} redCard={player.redCard} />
+                      <PlayerCard 
+                      number={player.number} 
+                      name={player.name} 
+                      color={uniformColor} 
+                      onClick={() => handlePlayerClick(index)} 
+                      size={56} 
+                      yellowCard={player.yellowCard} 
+                      redCard={player.redCard} 
+                      goals={player.goals} // 👈 이 코드를 추가하세요!
+                    />
                     </div>
                   );
                 })}
@@ -1273,7 +1265,16 @@ export default function App() {
                         handlePlayerClickB(index);
                       }}
                     >
-                      <PlayerCard number={player.number} name={player.name} color={uniformColorB} onClick={() => handlePlayerClickB(index)} compact size={42} fontSizeOverride={120} yellowCard={player.yellowCard} redCard={player.redCard} />
+                      <PlayerCard 
+                        number={player.number} 
+                        name={player.name} 
+                        color={uniformColor} 
+                        onClick={() => handlePlayerClick(index)} 
+                        size={56} 
+                        yellowCard={player.yellowCard} 
+                        redCard={player.redCard} 
+                        goals={player.goals} // 👈 이 코드를 추가하세요!
+                      />
                     </div>
                   );
                 })}
@@ -1324,7 +1325,16 @@ export default function App() {
                           handlePlayerClick(index);
                         }}
                       >
-                        <PlayerCard number={player.number} name={player.name} color={uniformColor} onClick={() => handlePlayerClick(index)} size={56} yellowCard={player.yellowCard} redCard={player.redCard} />
+                        <PlayerCard 
+                          number={player.number} 
+                          name={player.name} 
+                          color={uniformColor} 
+                          onClick={() => handlePlayerClick(index)} 
+                          size={56} 
+                          yellowCard={player.yellowCard} 
+                          redCard={player.redCard} 
+                          goals={player.goals} // 👈 이 줄을 "반드시" 추가하세요!
+                        />
                       </div>
                     );
                   })}
@@ -1363,7 +1373,16 @@ export default function App() {
                           handlePlayerClickB(index);
                         }}
                       >
-                        <PlayerCard number={player.number} name={player.name} color={uniformColorB} onClick={() => handlePlayerClickB(index)} size={56} yellowCard={player.yellowCard} redCard={player.redCard} />
+                        <PlayerCard 
+                          number={player.number} 
+                          name={player.name} 
+                          color={uniformColor} 
+                          onClick={() => handlePlayerClick(index)} 
+                          size={56} 
+                          yellowCard={player.yellowCard} 
+                          redCard={player.redCard} 
+                          goals={player.goals} // 👈 이 줄을 "반드시" 추가하세요!
+                        />
                       </div>
                     );
                   })}
@@ -1523,7 +1542,7 @@ export default function App() {
 
       {/* Live Matches Dialog */}
       <Dialog open={showLiveMatches} onOpenChange={(open: boolean) => !open && setShowLiveMatches(false)}>
-        <DialogContent className="max-h-[80vh] overflow-auto" style={{ width: '600px', maxWidth: '95vw' }}>
+        <DialogContent className="max-h-[80vh] overflow-auto" style={{ width: '600px', maxWidth: '95vw', zIndex: 100 }}>
           <DialogHeader>
             <DialogTitle>⚽ 실시간 경기 불러오기 (API-Football)</DialogTitle>
           </DialogHeader>
@@ -1560,50 +1579,109 @@ export default function App() {
             </div>
 
             {liveMatches.length > 0 && (
-              <div className="space-y-2">
-                <Label>진행중인 경기 선택 ({liveMatches.length}개)</Label>
-                <div className="overflow-y-auto space-y-1 border rounded p-2" style={{ maxHeight: '380px' }}>
-                  {liveMatches.map((match: any) => (
-                    <button
-                      key={match.fixture.id}
-                      onClick={() => loadMatchLineup(match.fixture.id, match.teams.home, match.teams.away, match.goals)}
-                      className="w-full p-3 text-left border rounded hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                          <div className="flex flex-col items-center">
-                            <img src={match.teams.home.logo} alt="" className="w-8 h-8 object-contain" />
-                            <div className="text-xs text-gray-500 mt-1">H</div>
-                          </div>
-                          <div>
-                            <div className="font-medium text-sm">
-                              {match.teams.home.name} vs {match.teams.away.name}
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              {match.league.name} • {match.fixture.status.elapsed}'
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right flex items-center gap-3">
-                          <div>
-                            <div className="font-bold text-lg">
-                              {match.goals.home} - {match.goals.away}
-                            </div>
-                            <div className="text-xs text-green-600 font-semibold">
-                              {match.fixture.status.short}
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-center">
-                            <img src={match.teams.away.logo} alt="" className="w-8 h-8 object-contain" />
-                            <div className="text-xs text-gray-500 mt-1">A</div>
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+        <div className="space-y-2">
+          <Label>경기 선택</Label>
+          
+          {/* 탭 헤더 추가 */}
+          <div className="flex border-b border-gray-200 mb-4 bg-gray-50 rounded-t-lg">
+            {(['LIVE', 'UPCOMING', 'FINISHED'] as const).map((tab) => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex-1 py-2.5 text-sm font-black rounded-md transition-all duration-200 ${
+                    isActive 
+                      ? 'bg-green-600 text-blue-50 shadow-md transform scale-[1.02]' 
+                      : 'text-gray-500 hover:bg-gray-200 hover:text-gray-700'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-1">
+                    {tab === 'LIVE' && <span className={isActive ? 'animate-pulse' : ''}>🔴</span>}
+                    {tab === 'UPCOMING' && '⏳'}
+                    {tab === 'FINISHED' && '🏁'}
+                    {tab === 'LIVE' ? '경기중' : tab === 'UPCOMING' ? '준비중' : '경기종료'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="overflow-y-auto space-y-1 border rounded p-2" style={{ maxHeight: '380px' }}>
+            {liveMatches
+              .filter((match: any) => {
+                const status = match.fixture.status.short;
+                // 🔴 경기중 탭: 현재 진행 중인 상태들
+                if (activeTab === 'LIVE') {
+                  return ["1H", "HT", "2H", "ET", "P", "BT"].indexOf(status) !== -1;
+                }
+                
+                // ⏳ 준비중 탭: 시작 전(Not Started)
+                if (activeTab === 'UPCOMING') {
+                  return status === "NS";
+                }
+                
+                // 🏁 경기종료 탭: 오늘 이미 끝난 경기(Full Time)
+                if (activeTab === 'FINISHED') {
+                  return status === "FT" || status === "AET" || status === "PEN";
+                }
+                
+                return false;
+              })
+              .map((match: any) => (
+<button
+  key={match.fixture.id}
+  onClick={() => loadMatchLineup(match.fixture.id, match.teams.home, match.teams.away, match.goals)}
+  className="w-full mb-3 p-4 border rounded-xl bg-white shadow-sm hover:bg-gray-50 transition-all overflow-hidden"
+  style={{ display: 'block' }} // 버튼의 기본 flex 동작 방지
+>
+  {/* 상단 리그 정보 */}
+  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '11px', fontWeight: 'bold', color: '#9ca3af' }}>
+    <span>{match.league.name}</span>
+    <span>{new Date(match.fixture.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+  </div>
+
+  {/* 메인 3단 정렬 섹션 */}
+  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+    
+    {/* 1. 홈팀 (정확히 38% 차지) */}
+    <div style={{ flex: '0 0 38%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', minWidth: 0 }}>
+      <span style={{ fontSize: '13px', fontWeight: '800', color: '#1f2937', textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {match.teams.home.name}
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <img src={match.teams.home.logo} alt="" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+        <span style={{ fontSize: '9px', fontWeight: '900', color: '#9ca3af', marginTop: '2px' }}>HOME</span>
+      </div>
+    </div>
+
+    {/* 2. 중앙 축 (정확히 24% 차지) */}
+    <div style={{ flex: '0 0 24%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ fontSize: '16px', fontWeight: '900', color: '#111827', backgroundColor: '#f3f4f6', padding: '4px 10px', borderRadius: '6px', letterSpacing: '-0.05em' }}>
+        {match.fixture.status.short === 'NS' ? 'VS' : `${match.goals.home}:${match.goals.away}`}
+      </div>
+      <div style={{ marginTop: '6px', fontSize: '9px', fontWeight: '900', color: 'white', backgroundColor: '#111827', padding: '2px 6px', borderRadius: '99px' }}>
+        {match.fixture.status.short === 'FT' ? 'FIN' : (match.fixture.status.elapsed ? `${match.fixture.status.elapsed}'` : match.fixture.status.short)}
+      </div>
+    </div>
+
+    {/* 3. 어웨이팀 (정확히 38% 차지) */}
+    <div style={{ flex: '0 0 38%', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '8px', minWidth: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <img src={match.teams.away.logo} alt="" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+        <span style={{ fontSize: '9px', fontWeight: '900', color: '#9ca3af', marginTop: '2px' }}>AWAY</span>
+      </div>
+      <span style={{ fontSize: '13px', fontWeight: '800', color: '#1f2937', textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {match.teams.away.name}
+      </span>
+    </div>
+
+  </div>
+</button>
+              ))}
+          </div>
+        </div>
+      )}
 
             {liveMatches.length === 0 && !isLoadingMatches && apiKey.trim() && (
               <div className="text-center py-8 text-gray-500 border rounded bg-gray-50">

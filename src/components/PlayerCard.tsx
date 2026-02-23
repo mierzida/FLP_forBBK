@@ -1,6 +1,5 @@
-
 // =============================
-// PlayerCard.tsx (refactored)
+// PlayerCard.tsx (Final: Emoji on the side)
 // =============================
 import React, { memo } from 'react';
 import { UniformIcon } from './UniformIcon';
@@ -15,46 +14,105 @@ export interface PlayerCardProps {
   fontSizeOverride?: number;
   yellowCard?: boolean;
   redCard?: boolean;
+  goals?: number; // 득점 수
 }
 
-export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({ number, name, color, onClick, compact = false, size, fontSizeOverride, yellowCard = false, redCard = false }) {
+export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({ 
+  number, 
+  name, 
+  color, 
+  onClick, 
+  compact = false, 
+  size, 
+  fontSizeOverride, 
+  yellowCard = false, 
+  redCard = false,
+  goals = 0 
+}) {
   const sizeVal = size ?? (compact ? 36 : 48);
-  const nameClass = compact ? 'text-xs' : 'text-sm';
   
   // 카드 상태에 따른 배경색 결정
   const getCardBackgroundStyle = () => {
-    if (redCard) return { backgroundColor: '#ef4444', color: '#ffffff' }; // red-500, white text
-    if (yellowCard) return { backgroundColor: '#fbbf24', color: '#000000' }; // yellow-400, black text
-    return { backgroundColor: 'rgba(255, 255, 255, 0.9)', color: '#000000' }; // white/90, black text
+    if (redCard) return { backgroundColor: '#ef4444', color: '#ffffff' }; 
+    if (yellowCard) return { backgroundColor: '#fbbf24', color: '#000000' }; 
+    return { backgroundColor: 'rgba(255, 255, 255, 0.9)', color: '#000000' }; 
   };
+
+  // 모든 카드의 폰트 크기를 통일 (일관성 확보)
+  const fixedFontSize = compact ? '11px' : '13px';
 
   return (
     <button
       onClick={onClick}
-      className="flex flex-col items-center gap-1 transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50 rounded-lg p-2"
+      className="flex flex-col items-center gap-1 transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50 rounded-lg p-1"
       type="button"
-      aria-label={`${name || 'Player'} card`}
     >
+      {/* 유니폼 아이콘 구역 */}
       <div style={{ width: sizeVal, height: sizeVal, minWidth: sizeVal, minHeight: sizeVal }}>
         <UniformIcon color={color} number={number} size={sizeVal} compact={compact} fontSizeOverride={fontSizeOverride} />
       </div>
-      <div className="px-2 py-0.5 rounded shadow-sm" style={{ 
-        minWidth: compact ? 64 : 80,
-        ...getCardBackgroundStyle()
-      }}>
-        <p
-          className={`${nameClass} truncate font-bold`}
+
+      {/* 선수 이름 및 득점 표시 영역 */}
+      <div 
+        className="px-1.5 py-1 rounded shadow-sm flex items-center justify-center" 
+        style={{ 
+          minWidth: compact ? '70px' : '90px',
+          maxWidth: compact ? '80px' : '105px', 
+          minHeight: compact ? '34px' : '44px', // 2줄 높이 고정
+          ...getCardBackgroundStyle(),
+          transition: 'all 0.2s ease',
+        }}
+      >
+        <div 
           style={{
-            maxWidth: compact ? 88 : 120,
-            fontFamily: "NanumSquareNeo, ui-sans-serif, system-ui",
+            width: '100%',
+            fontSize: fixedFontSize,
             fontWeight: 800,
-            // for variable-font variants
-            fontVariationSettings: "'wght' 800",
-            fontSize: compact ? '14px' : '16px',
+            fontFamily: "NanumSquareNeo, ui-sans-serif, system-ui",
+            textAlign: 'center',
+            whiteSpace: 'normal',
+            wordBreak: name.includes(' ') ? 'break-word' : 'break-all',
+            overflowWrap: 'anywhere',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            lineHeight: '1.2',
+            letterSpacing: '-0.03em', 
           }}
         >
-          {name || '선수명'}
-        </p>
+          {/* 성과 이름이 공백으로 구분된 경우 줄바꿈 처리 */}
+          {name.includes(' ') ? (
+            name.split(' ').map((part, i, arr) => (
+              <React.Fragment key={i}>
+                {part}
+                {/* 💡 마지막 줄 이름 우측에 축구공 표시 */}
+                {i === arr.length - 1 && goals > 0 && (
+                  <span 
+                    style={{ 
+                      fontSize: '14px',        // 👈 크기를 키웠습니다 (기존 10px)
+                      marginLeft: '4px',       // 👈 간격을 넓혔습니다
+                      verticalAlign: 'text-top' // 👈 이름보다 살짝 위로 정렬하여 강조
+                    }}
+                  >
+                    {'⚽'.repeat(goals)}
+                  </span>
+                )}
+                {i < arr.length - 1 && <br />}
+              </React.Fragment>
+            ))
+          ) : (
+            <>
+              {name || '선수명'}
+              {/* 💡 한 단어 이름인 경우 바로 옆에 표시 */}
+              {goals > 0 && (
+                <span style={{ fontSize: '10px', marginLeft: '2px', verticalAlign: 'middle' }}>
+                  {'⚽'.repeat(goals)}
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </button>
   );
