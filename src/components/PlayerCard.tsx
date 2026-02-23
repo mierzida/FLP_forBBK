@@ -33,8 +33,8 @@ export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({
   
   // 카드 상태에 따른 배경색 결정
   const getCardBackgroundStyle = () => {
-    if (redCard) return { backgroundColor: '#ef4444', color: '#ffffff' }; 
-    if (yellowCard) return { backgroundColor: '#fbbf24', color: '#000000' }; 
+    if (redCard) return { backgroundColor: '#d00202', color: '#cbcbcb' }; 
+    if (yellowCard) return { backgroundColor: '#fbe524', color: '#000000' }; 
     return { backgroundColor: 'rgba(255, 255, 255, 0.9)', color: '#000000' }; 
   };
 
@@ -58,7 +58,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({
         style={{ 
           minWidth: compact ? '70px' : '90px',
           maxWidth: compact ? '80px' : '105px', 
-          minHeight: compact ? '34px' : '44px', // 2줄 높이 고정
+          minHeight: compact ? '34px' : '39px', // 2줄 높이 고정
           ...getCardBackgroundStyle(),
           transition: 'all 0.2s ease',
         }}
@@ -90,9 +90,9 @@ export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({
                 {i === arr.length - 1 && goals > 0 && (
                   <span 
                     style={{ 
-                      fontSize: '14px',        // 👈 크기를 키웠습니다 (기존 10px)
-                      marginLeft: '4px',       // 👈 간격을 넓혔습니다
-                      verticalAlign: 'text-top' // 👈 이름보다 살짝 위로 정렬하여 강조
+                      fontSize: '14px',       
+                      marginLeft: '4px',       
+                      verticalAlign: 'text-top' 
                     }}
                   >
                     {'⚽'.repeat(goals)}

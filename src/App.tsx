@@ -902,7 +902,7 @@ export default function App() {
           setSelectedFixtureId(fixtureId);
           setAutoRefreshEnabled(true);
           setShowLiveMatches(false);
-          alert(`${homeTeam.name} vs ${awayTeam.name} 라인업 로드 완료 (30초 자동갱신)`);
+          alert(`${homeTeam.name} vs ${awayTeam.name} 라인업 로드 완료 (10초 자동갱신)`);
         } else {
           console.log(`🔄 자동 갱신 완료: ${homeTeam.name} vs ${awayTeam.name}`);
         }
@@ -947,7 +947,7 @@ export default function App() {
             true // 자동 갱신 플래그
           );
         }
-      }, 30000); // 30초
+      }, 10000); // 10초
 
       // cleanup
       return () => {
@@ -1376,7 +1376,7 @@ export default function App() {
                         <PlayerCard 
                           number={player.number} 
                           name={player.name} 
-                          color={uniformColor} 
+                          color={uniformColorB} 
                           onClick={() => handlePlayerClick(index)} 
                           size={56} 
                           yellowCard={player.yellowCard} 
