@@ -1,7 +1,9 @@
 $ErrorActionPreference = 'Stop'
 Write-Output "Starting elevated build script..."
 $env:PATH = 'C:\Program Files\nodejs;' + $env:PATH
-Set-Location 'C:\Users\USER\Desktop\Responsive Soccer Lineup Display'
+# Use the directory where this script is located
+$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $scriptPath
 
 # Remove electron-builder cache to force fresh download
 $cachePath = Join-Path $env:LOCALAPPDATA 'electron-builder\Cache'

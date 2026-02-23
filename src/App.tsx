@@ -39,6 +39,7 @@ interface ElectronAPI {
   saveFile?: (opts: any) => Promise<{ canceled?: boolean; filePath?: string } | undefined>;
   openFile?: () => Promise<{ canceled?: boolean; filePath?: string; error?: string; data?: any } | undefined>;
   captureAndSave?: (opts: any) => Promise<{ canceled?: boolean; filePath?: string } | undefined>;
+  broadcastPlayerCoordinates?: (data: any) => Promise<void>;
   setTransparentMode?: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   getTransparentMode?: () => Promise<{ success: boolean; transparent: boolean }>;
   minimize?: () => void;
@@ -88,6 +89,180 @@ function calcPositions(formation: Formation): { x: number; y: number }[] {
   return positions;
 }
 
+// 경기 시간을 MM:SS 형식으로 변환
+function formatMatchTime(minutes: number | null | undefined): string | null {
+  if (minutes === null || minutes === undefined) return null;
+  
+  const mins = Math.floor(minutes);
+  const secs = 0; // API에서는 분 단위만 제공
+  
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// 로컬 파일 경로를 HTTP URL로 변환
+function convertLogoPathToURL(logoPath: string | null): string | null {
+  if (!logoPath) return null;
+  
+  // 이미 HTTP URL이면 그대로 반환
+  if (logoPath.startsWith('http://') || logoPath.startsWith('https://')) {
+    return logoPath;
+  }
+  
+  const HTTP_SERVER_URL = 'http://127.0.0.1:9104';
+  
+  // "./assets/logos/..." 형식 처리 (team-index.json 형식)
+  if (logoPath.startsWith('./assets/')) {
+    return `${HTTP_SERVER_URL}/assets/${logoPath.substring('./assets/'.length)}`;
+  }
+  
+  // "assets/..." 형식 처리
+  if (logoPath.startsWith('assets/')) {
+    return `${HTTP_SERVER_URL}/${logoPath}`;
+  }
+  
+  // "src/assets/..." 형식 처리
+  if (logoPath.startsWith('src/assets/')) {
+    return `${HTTP_SERVER_URL}/assets/${logoPath.substring('src/assets/'.length)}`;
+  }
+  
+  // "public/assets/..." 형식 처리
+  if (logoPath.startsWith('public/assets/')) {
+    return `${HTTP_SERVER_URL}/assets/${logoPath.substring('public/assets/'.length)}`;
+  }
+  
+  // 기본적으로 그대로 반환 (상대 경로 가정)
+  return `${HTTP_SERVER_URL}/${logoPath}`;
+}
+
+// 좌표 데이터를 소켓으로 전송하는 함수
+function broadcastCurrentPlayerPositions(
+  formation: Formation,
+  formationB: Formation,
+  players: Player[],
+  playersB: Player[],
+  overrides: Record<number, { x: number; y: number }>,
+  overridesB: Record<number, { x: number; y: number }>,
+  verticalMode: boolean,
+  scoreA: number,
+  scoreB: number,
+  teamNameA: string,
+  teamNameB: string,
+  teamLogoA: any,
+  teamLogoB: any,
+  matchTime?: string | null,
+  matchStatus?: string | null,
+  electronAPI?: ElectronAPI
+) {
+  if (!electronAPI?.broadcastPlayerCoordinates) return;
+
+  try {
+    const playerPositionsA = calcPositions(formation);
+    const playerPositionsB = calcPositions(formationB);
+
+    // 팀 A 선수 좌표 계산
+    const teamAPositions = players.map((player, index) => {
+      const defaultPos = playerPositionsA[index];
+      if (!defaultPos) return null;
+
+      let pos = overrides[index] ?? defaultPos;
+
+      // 세로 모드 좌표 변환
+      if (verticalMode) {
+        const topStart = 2;
+        const topSpan = 50;
+        const mappedY = topStart + (pos.y / 100) * topSpan;
+        const mappedX = 50 + (pos.x - 50) * 1.15;
+        pos = { x: mappedX, y: mappedY };
+      }
+
+      return {
+        id: `A-${index}`,
+        team: 'A',
+        number: player.number,
+        name: player.name,
+        x: Math.round(pos.x * 100) / 100, // 소수점 2자리까지
+        y: Math.round(pos.y * 100) / 100,
+        yellowCard: player.yellowCard || false,
+        redCard: player.redCard || false
+      };
+    }).filter(Boolean);
+
+    // 팀 B 선수 좌표 계산
+    const teamBPositions = playersB.map((player, index) => {
+      const defaultPos = playerPositionsB[index];
+      if (!defaultPos) return null;
+
+      let pos = overridesB[index] ?? defaultPos;
+
+      // 세로 모드 좌표 변환
+      if (verticalMode) {
+        const bottomStart = 48;
+        const bottomSpan = 50;
+        const mirroredY = 100 - pos.y;
+        const mappedY = bottomStart + (mirroredY / 100) * bottomSpan;
+        const mappedX = 50 + (pos.x - 50) * 1.15;
+        pos = { x: mappedX, y: mappedY };
+      }
+
+      return {
+        id: `B-${index}`,
+        team: 'B',
+        number: player.number,
+        name: player.name,
+        x: Math.round(pos.x * 100) / 100,
+        y: Math.round(pos.y * 100) / 100,
+        yellowCard: player.yellowCard || false,
+        redCard: player.redCard || false
+      };
+    }).filter(Boolean);
+
+    const data = {
+      timestamp: Date.now(),
+      verticalMode,
+      match: {
+        scoreA,
+        scoreB,
+        elapsed: matchTime || null,
+        status: matchStatus || null,
+        teamA: {
+          name: teamNameA || 'Team A',
+          formation: formation.name,
+          uniformColor: players[0]?.name ? 'blue' : 'blue', // 기본값
+          logo: teamLogoA ? {
+            id: teamLogoA.id,
+            slug: teamLogoA.slug,
+            country: teamLogoA.country,
+            englishName: teamLogoA.englishName,
+            svgUrl: convertLogoPathToURL(teamLogoA.logos?.svg),
+            pngUrl: convertLogoPathToURL(teamLogoA.logos?.png)
+          } : null
+        },
+        teamB: {
+          name: teamNameB || 'Team B',
+          formation: formationB.name,
+          uniformColor: playersB[0]?.name ? 'red' : 'red', // 기본값
+          logo: teamLogoB ? {
+            id: teamLogoB.id,
+            slug: teamLogoB.slug,
+            country: teamLogoB.country,
+            englishName: teamLogoB.englishName,
+            svgUrl: convertLogoPathToURL(teamLogoB.logos?.svg),
+            pngUrl: convertLogoPathToURL(teamLogoB.logos?.png)
+          } : null
+        }
+      },
+      teams: {
+        A: teamAPositions,
+        B: teamBPositions
+      }
+    };
+
+    electronAPI.broadcastPlayerCoordinates(data);
+  } catch (error) {
+    console.warn('Failed to broadcast player coordinates:', error);
+  }
+}
+
 export default function App() {
   const electronAPI: ElectronAPI | undefined = (window as any).electronAPI;
   const isElectronAvailable = !!electronAPI;
@@ -124,6 +299,21 @@ export default function App() {
   const [showFormationA, setShowFormationA] = useState(false);
   const [showFormationB, setShowFormationB] = useState(false);
 
+  // API-Football states
+  const [apiKey, setApiKey] = useState(() => {
+    try {
+      return localStorage.getItem('api-football-key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [showLiveMatches, setShowLiveMatches] = useState(false);
+  const [liveMatches, setLiveMatches] = useState<any[]>([]);
+  const [isLoadingMatches, setIsLoadingMatches] = useState(false);
+  const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const refreshIntervalRef = useRef<number | null>(null);
+
   /********
    * Refs *
    ********/
@@ -134,6 +324,8 @@ export default function App() {
   const draggingRefB = useRef<DragState | null>(null);
   const singleClickTimerRef = useRef<number | null>(null);
   const singleClickTimerRefB = useRef<number | null>(null);
+  const broadcastTimerRef = useRef<number | null>(null);
+  const isInitialMount = useRef<boolean>(true);
 
   // make sure overrides state exist before snapshot usage
   const [overrides, setOverrides] = useState<Record<number, { x: number; y: number }>>({});
@@ -186,6 +378,108 @@ export default function App() {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, []);
+
+  // 선수 정보 변경 시 데이터 전송
+  useEffect(() => {
+    // 초기 마운트 시에는 전송하지 않음
+    if (isInitialMount.current) return;
+
+    // 선수 정보 변경 후 100ms 후 전송 (디바운싱)
+    if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
+    broadcastTimerRef.current = window.setTimeout(() => {
+      broadcastCurrentPlayerPositions(
+        formation,
+        formationB,
+        players,
+        playersB,
+        overrides,
+        overridesB,
+        verticalMode,
+        scoreA,
+        scoreB,
+        teamNameA,
+        teamNameB,
+        teamLogoA,
+        teamLogoB,
+        null,
+        null,
+        electronAPI
+      );
+      broadcastTimerRef.current = null;
+    }, 100);
+  }, [players, playersB]); // 선수 배열 변경 감지
+
+  // API 키 저장
+  useEffect(() => {
+    try {
+      if (apiKey) {
+        localStorage.setItem('api-football-key', apiKey);
+      }
+    } catch (error) {
+      console.warn('Failed to save API key:', error);
+    }
+  }, [apiKey]);
+
+  // 팀 이름 변경 시 데이터 전송
+  useEffect(() => {
+    // 초기 마운트 시에는 전송하지 않음
+    if (isInitialMount.current) return;
+
+    // 팀 이름 변경 후 즉시 전송
+    setTimeout(() => {
+      broadcastCurrentPlayerPositions(
+        formation,
+        formationB,
+        players,
+        playersB,
+        overrides,
+        overridesB,
+        verticalMode,
+        scoreA,
+        scoreB,
+        teamNameA,
+        teamNameB,
+        teamLogoA,
+        teamLogoB,
+        null,
+        null,
+        electronAPI
+      );
+    }, 0);
+  }, [teamNameA, teamNameB]); // 팀 이름 변경 감지
+
+  // 스코어 변경 시 데이터 전송
+  useEffect(() => {
+    // 초기 마운트 시에는 전송하지 않음
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    // 스코어 변경 후 100ms 후 전송 (디바운싱)
+    if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
+    broadcastTimerRef.current = window.setTimeout(() => {
+      broadcastCurrentPlayerPositions(
+        formation,
+        formationB,
+        players,
+        playersB,
+        overrides,
+        overridesB,
+        verticalMode,
+        scoreA,
+        scoreB,
+        teamNameA,
+        teamNameB,
+        teamLogoA,
+        teamLogoB,
+        null,
+        null,
+        electronAPI
+      );
+      broadcastTimerRef.current = null;
+    }, 100);
+  }, [scoreA, scoreB]);
 
   /***********************
    * Save / Load JSON     *
@@ -309,6 +603,8 @@ export default function App() {
     return () => {
       if (singleClickTimerRef.current) window.clearTimeout(singleClickTimerRef.current);
       if (singleClickTimerRefB.current) window.clearTimeout(singleClickTimerRefB.current);
+      if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
+      if (refreshIntervalRef.current) window.clearInterval(refreshIntervalRef.current);
     };
   }, []);
 
@@ -329,6 +625,11 @@ export default function App() {
     setPlayers(newPlayers);
     setFormation(newFormation);
     setOverrides({}); // reset manual drags
+
+    // 포메이션 변경 후 좌표 데이터 전송
+    setTimeout(() => {
+      broadcastCurrentPlayerPositions(newFormation, formationB, newPlayers, playersB, {}, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+    }, 0);
   };
 
   const updatePlayersForFormationB = (newFormation: Formation) => {
@@ -340,6 +641,11 @@ export default function App() {
     setPlayersB(newPlayers);
     setFormationB(newFormation);
     setOverridesB({});
+
+    // 포메이션 변경 후 좌표 데이터 전송
+    setTimeout(() => {
+      broadcastCurrentPlayerPositions(formation, newFormation, players, newPlayers, overrides, {}, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+    }, 0);
   };
 
   const handlePlayerChange = (index: number, player: Player) => {
@@ -407,6 +713,270 @@ export default function App() {
   };
 
   /***************************
+   * API-Football Integration *
+   ***************************/
+  
+  // 실시간 및 2시간 이내 시작 예정 경기 목록 가져오기
+  const loadLiveMatches = async () => {
+    if (!apiKey.trim()) {
+      alert('API 키를 입력하세요');
+      return;
+    }
+
+    setIsLoadingMatches(true);
+    try {
+      // 1. 오늘 날짜의 모든 경기 가져오기
+      const today = new Date().toISOString().split('T')[0];
+      const response = await fetch(`https://v3.football.api-sports.io/fixtures?date=${today}`, {
+        headers: {
+          'x-apisports-key': apiKey
+        }
+      });
+
+      const data = await response.json();
+      
+      if (data.response && data.response.length > 0) {
+        const now = new Date();
+        const twoHoursLater = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 현재 시간 + 2시간
+
+        // 2. 필터링 로직: [진행 중인 경기] + [2시간 이내 시작 예정 경기]
+        const filteredMatches = data.response.filter((match: any) => {
+          const startTime = new Date(match.fixture.timestamp * 1000); // API의 timestamp는 초 단위
+          const status = match.fixture.status.short;
+
+          // 'includes' 대신 'indexOf'를 사용하여 하위 호환성 확보
+          // 진행 중인 상태 코드 (1H, HT, 2H, ET, P, BT)
+          const liveStatuses = ["1H", "HT", "2H", "ET", "P", "BT"];
+          const isLive = liveStatuses.indexOf(status) !== -1;
+          
+          // 시작 전(NS)이면서 현재~2시간 이내인 경기
+          const isUpcomingSoon = (status === "NS") && (startTime >= now && startTime <= twoHoursLater);
+
+          return isLive || isUpcomingSoon;
+        });
+
+        // 3. 시간 순서대로 정렬
+        filteredMatches.sort((a: any, b: any) => a.fixture.timestamp - b.fixture.timestamp);
+
+        if (filteredMatches.length > 0) {
+          setLiveMatches(filteredMatches);
+        } else {
+          setLiveMatches([]);
+          alert('현재 진행 중이거나 2시간 이내 예정된 경기가 없습니다');
+        }
+      } else {
+        setLiveMatches([]);
+        alert('오늘 예정된 경기 데이터가 없습니다');
+      }
+    } catch (error) {
+      console.error('Failed to load live/upcoming matches:', error);
+      alert('경기 목록을 불러오는데 실패했습니다');
+    } finally {
+      setIsLoadingMatches(false);
+    }
+  };
+
+  // 포메이션 문자열을 배열로 변환 (예: "4-3-3" -> [1, 4, 3, 3])
+  const parseFormation = (formationStr: string): number[] => {
+    if (!formationStr) return [1, 4, 3, 3];
+    
+    const parts = formationStr.split('-').map(n => parseInt(n, 10));
+    return [1, ...parts]; // 골키퍼 1명 추가
+  };
+
+  // 경기 라인업 가져오기 및 적용
+  const loadMatchLineup = async (fixtureId: number, homeTeam: any, awayTeam: any, score: any, isAutoRefresh: boolean = false) => {
+    if (!isAutoRefresh) {
+      setIsLoadingMatches(true);
+    }
+    
+    try {
+      // 라인업 데이터 가져오기
+      const lineupResponse = await fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`, {
+        headers: {
+          'x-apisports-key': apiKey
+        }
+      });
+
+      const lineupData = await lineupResponse.json();
+      
+      // 최신 경기 정보 (스코어, 상태) 가져오기
+      const fixtureResponse = await fetch(`https://v3.football.api-sports.io/fixtures?id=${fixtureId}`, {
+        headers: {
+          'x-apisports-key': apiKey
+        }
+      });
+
+      const fixtureData = await fixtureResponse.json();
+      const latestFixture = fixtureData.response[0];
+      
+      if (lineupData.response && lineupData.response.length >= 2) {
+        const homeLineup = lineupData.response[0];
+        const awayLineup = lineupData.response[1];
+
+        // 홈팀 (팀 A) 설정
+        const homeFormationStr = homeLineup.formation || '4-3-3';
+        const homeFormationLines = parseFormation(homeFormationStr);
+        const homeFormation: Formation = {
+          name: homeFormationStr,
+          lines: homeFormationLines
+        };
+
+        const homePlayers = homeLineup.startXI.map((p: any, idx: number) => ({
+          number: p.player.number?.toString() || (idx + 1).toString(),
+          name: p.player.name || `선수 ${idx + 1}`,
+          yellowCard: false,
+          redCard: false
+        }));
+
+        // 어웨이팀 (팀 B) 설정
+        const awayFormationStr = awayLineup.formation || '4-3-3';
+        const awayFormationLines = parseFormation(awayFormationStr);
+        const awayFormation: Formation = {
+          name: awayFormationStr,
+          lines: awayFormationLines
+        };
+
+        const awayPlayers = awayLineup.startXI.map((p: any, idx: number) => ({
+          number: p.player.number?.toString() || (idx + 1).toString(),
+          name: p.player.name || `선수 ${idx + 1}`,
+          yellowCard: false,
+          redCard: false
+        }));
+
+        // 팀 로고 설정 (API에서 제공하는 URL 사용)
+        const homeLogoData = {
+          id: `api/${homeTeam.id}`,
+          slug: homeTeam.name.toLowerCase().replace(/\s+/g, '-'),
+          country: homeLineup.team.country || 'unknown',
+          englishName: homeTeam.name,
+          logos: {
+            svg: null,
+            png: homeTeam.logo // API에서 제공하는 로고 URL
+          }
+        };
+
+        const awayLogoData = {
+          id: `api/${awayTeam.id}`,
+          slug: awayTeam.name.toLowerCase().replace(/\s+/g, '-'),
+          country: awayLineup.team.country || 'unknown',
+          englishName: awayTeam.name,
+          logos: {
+            svg: null,
+            png: awayTeam.logo // API에서 제공하는 로고 URL
+          }
+        };
+
+        // 상태 업데이트
+        setFormation(homeFormation);
+        setPlayers(homePlayers);
+        setTeamNameA(homeTeam.name);
+        setTeamLogoA(homeLogoData);
+        if (!isAutoRefresh) setOverrides({}); // 자동 갱신 시에는 위치 유지
+
+        setFormationB(awayFormation);
+        setPlayersB(awayPlayers);
+        setTeamNameB(awayTeam.name);
+        setTeamLogoB(awayLogoData);
+        if (!isAutoRefresh) setOverridesB({}); // 자동 갱신 시에는 위치 유지
+
+        // 최신 스코어 및 경기 시간 설정
+        const newScoreA = latestFixture.goals.home || 0;
+        const newScoreB = latestFixture.goals.away || 0;
+        const matchElapsedMinutes = latestFixture.fixture.status.elapsed; // 경기 시간 (분)
+        const matchElapsedFormatted = formatMatchTime(matchElapsedMinutes); // MM:SS 형식으로 변환
+        const matchStatus = latestFixture.fixture.status.short; // 경기 상태 (1H, HT, 2H, ET, FT 등)
+        
+        setScoreA(newScoreA);
+        setScoreB(newScoreB);
+
+        // 데이터를 UDP로 즉시 전송
+        setTimeout(() => {
+          broadcastCurrentPlayerPositions(
+            homeFormation,
+            awayFormation,
+            homePlayers,
+            awayPlayers,
+            isAutoRefresh ? overrides : {},
+            isAutoRefresh ? overridesB : {},
+            verticalMode,
+            newScoreA,
+            newScoreB,
+            homeTeam.name,
+            awayTeam.name,
+            homeLogoData,
+            awayLogoData,
+            matchElapsedFormatted,
+            matchStatus,
+            electronAPI
+          );
+        }, 100);
+
+        if (!isAutoRefresh) {
+          // 처음 로드 시에만 자동 갱신 활성화 및 다이얼로그 닫기
+          setSelectedFixtureId(fixtureId);
+          setAutoRefreshEnabled(true);
+          setShowLiveMatches(false);
+          alert(`${homeTeam.name} vs ${awayTeam.name} 라인업이 로드되었습니다\n30초마다 자동 갱신됩니다`);
+        } else {
+          console.log(`🔄 자동 갱신: ${homeTeam.name} ${newScoreA} - ${newScoreB} ${awayTeam.name} → UDP 전송 완료`);
+        }
+      } else {
+        if (!isAutoRefresh) {
+          alert('라인업 정보를 찾을 수 없습니다');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load lineup:', error);
+      if (!isAutoRefresh) {
+        alert('라인업을 불러오는데 실패했습니다');
+      }
+    } finally {
+      if (!isAutoRefresh) {
+        setIsLoadingMatches(false);
+      }
+    }
+  };
+
+  // 자동 갱신 중지
+  const stopAutoRefresh = () => {
+    if (refreshIntervalRef.current) {
+      window.clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+    setAutoRefreshEnabled(false);
+    setSelectedFixtureId(null);
+  };
+
+  // 자동 갱신 효과
+  useEffect(() => {
+    if (autoRefreshEnabled && selectedFixtureId && apiKey) {
+      // 30초마다 갱신
+      refreshIntervalRef.current = window.setInterval(() => {
+        // 현재 선택된 경기 정보 찾기
+        const selectedMatch = liveMatches.find(m => m.fixture.id === selectedFixtureId);
+        if (selectedMatch) {
+          loadMatchLineup(
+            selectedFixtureId,
+            selectedMatch.teams.home,
+            selectedMatch.teams.away,
+            selectedMatch.goals,
+            true // 자동 갱신 플래그
+          );
+        }
+      }, 30000); // 30초
+
+      // cleanup
+      return () => {
+        if (refreshIntervalRef.current) {
+          window.clearInterval(refreshIntervalRef.current);
+          refreshIntervalRef.current = null;
+        }
+      };
+    }
+  }, [autoRefreshEnabled, selectedFixtureId, apiKey, liveMatches]);
+
+  /***************************
    * Pointer / Drag Handlers *
    ***************************/ 
   const toPercent = useCallback(
@@ -468,6 +1038,13 @@ export default function App() {
         handlePlayerClick(index);
         singleClickTimerRef.current = null;
       }, 250);
+    } else {
+      // 드래그가 끝난 후 좌표 데이터 전송 (디바운싱 적용)
+      if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
+      broadcastTimerRef.current = window.setTimeout(() => {
+        broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+        broadcastTimerRef.current = null;
+      }, 100); // 100ms 디바운싱
     }
   };
 
@@ -518,6 +1095,13 @@ export default function App() {
         handlePlayerClickB(index);
         singleClickTimerRefB.current = null;
       }, 250);
+    } else {
+      // 드래그가 끝난 후 좌표 데이터 전송 (디바운싱 적용)
+      if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
+      broadcastTimerRef.current = window.setTimeout(() => {
+        broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+        broadcastTimerRef.current = null;
+      }, 100); // 100ms 디바운싱
     }
   };
 
@@ -549,8 +1133,23 @@ export default function App() {
       {/* Top-left controls */}
   <div style={{ position: 'fixed', top: 13, left: 200, zIndex: 70, pointerEvents: 'auto' }} className="app-no-drag">
           <div className="flex gap-2 items-center">
-            <Button onClick={() => setVerticalMode((s) => !s)} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>{verticalMode ? '가로모드' : '세로모드'}</Button>
+            <Button onClick={() => {
+              const newVerticalMode = !verticalMode;
+              setVerticalMode(newVerticalMode);
+              // 세로 모드 변경 후 좌표 데이터 전송
+              setTimeout(() => {
+                broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, newVerticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+              }, 0);
+            }} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>{verticalMode ? '가로모드' : '세로모드'}</Button>
             <Button onClick={handleSwapTeams} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }} title="팀 A와 팀 B 정보 교환">⇄ 팀교환</Button>
+            <Button onClick={() => setShowLiveMatches(true)} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #16a34a', background: '#16a34a', color: '#ffffff' }} title="API-Football 실시간 경기">⚽ 실시간경기</Button>
+            {autoRefreshEnabled && (
+              <Button onClick={stopAutoRefresh} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #dc2626', background: '#dc2626', color: '#ffffff' }} title="자동 갱신 중지">
+                <span className="flex items-center gap-1">
+                  🔄 갱신중지
+                </span>
+              </Button>
+            )}
             {/* Placeholder SAVE/LOAD buttons (UI only) */}
             <Button onClick={handleSaveJSON} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>SAVE</Button>
             <Button onClick={handleLoadJSON} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>LOAD</Button>
@@ -918,6 +1517,101 @@ export default function App() {
           </DialogHeader>
           <div style={{ width: '90%' }}>
             <FormationEditor inline={true} formation={formationB} onFormationChange={(f) => { updatePlayersForFormationB(f); setShowFormationB(false); }} players={playersB} onPlayerChange={handlePlayerChangeB} uniformColor={uniformColorB} onUniformColorChange={setUniformColorB} offsetPx={0} />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Live Matches Dialog */}
+      <Dialog open={showLiveMatches} onOpenChange={(open: boolean) => !open && setShowLiveMatches(false)}>
+        <DialogContent className="max-h-[80vh] overflow-auto" style={{ width: '600px', maxWidth: '95vw' }}>
+          <DialogHeader>
+            <DialogTitle>⚽ 실시간 경기 불러오기 (API-Football)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="api-key">API Key</Label>
+              <Input
+                id="api-key"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="API-Football API 키 입력"
+              />
+              <p className="text-sm text-gray-500">
+                API-Football (api-sports.io)에서 발급받은 API 키를 입력하세요.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                onClick={loadLiveMatches}
+                disabled={isLoadingMatches || !apiKey.trim()}
+                className="flex-1"
+                style={{ background: '#16a34a', color: '#ffffff' }}
+              >
+                {isLoadingMatches ? '로딩중...' : '🔄 실시간 경기 불러오기'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowLiveMatches(false)}
+              >
+                취소
+              </Button>
+            </div>
+
+            {liveMatches.length > 0 && (
+              <div className="space-y-2">
+                <Label>진행중인 경기 선택 ({liveMatches.length}개)</Label>
+                <div className="overflow-y-auto space-y-1 border rounded p-2" style={{ maxHeight: '380px' }}>
+                  {liveMatches.map((match: any) => (
+                    <button
+                      key={match.fixture.id}
+                      onClick={() => loadMatchLineup(match.fixture.id, match.teams.home, match.teams.away, match.goals)}
+                      className="w-full p-3 text-left border rounded hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                          <div className="flex flex-col items-center">
+                            <img src={match.teams.home.logo} alt="" className="w-8 h-8 object-contain" />
+                            <div className="text-xs text-gray-500 mt-1">H</div>
+                          </div>
+                          <div>
+                            <div className="font-medium text-sm">
+                              {match.teams.home.name} vs {match.teams.away.name}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {match.league.name} • {match.fixture.status.elapsed}'
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right flex items-center gap-3">
+                          <div>
+                            <div className="font-bold text-lg">
+                              {match.goals.home} - {match.goals.away}
+                            </div>
+                            <div className="text-xs text-green-600 font-semibold">
+                              {match.fixture.status.short}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-center">
+                            <img src={match.teams.away.logo} alt="" className="w-8 h-8 object-contain" />
+                            <div className="text-xs text-gray-500 mt-1">A</div>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {liveMatches.length === 0 && !isLoadingMatches && apiKey.trim() && (
+              <div className="text-center py-8 text-gray-500 border rounded bg-gray-50">
+                <div className="text-4xl mb-2">⚽</div>
+                <div>현재 진행 중인 경기가 없습니다</div>
+                <div className="text-sm mt-1">잠시 후 다시 시도해주세요</div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
