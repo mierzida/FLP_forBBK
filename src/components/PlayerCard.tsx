@@ -63,56 +63,77 @@ export const PlayerCard: React.FC<PlayerCardProps> = memo(function PlayerCard({
           transition: 'all 0.2s ease',
         }}
       >
-        <div 
-          style={{
-            width: '100%',
-            fontSize: fixedFontSize,
-            fontWeight: 800,
-            fontFamily: "NanumSquareNeo, ui-sans-serif, system-ui",
-            textAlign: 'center',
-            whiteSpace: 'normal',
-            wordBreak: name.includes(' ') ? 'break-word' : 'break-all',
-            overflowWrap: 'anywhere',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            lineHeight: '1.2',
-            letterSpacing: '-0.03em', 
-          }}
-        >
-          {/* 성과 이름이 공백으로 구분된 경우 줄바꿈 처리 */}
-          {name.includes(' ') ? (
-            name.split(' ').map((part, i, arr) => (
-              <React.Fragment key={i}>
-                {part}
-                {/* 💡 마지막 줄 이름 우측에 축구공 표시 */}
-                {i === arr.length - 1 && goals > 0 && (
-                  <span 
-                    style={{ 
-                      fontSize: '14px',       
-                      marginLeft: '4px',       
-                      verticalAlign: 'text-top' 
-                    }}
-                  >
-                    {'⚽'.repeat(goals)}
-                  </span>
-                )}
-                {i < arr.length - 1 && <br />}
-              </React.Fragment>
-            ))
-          ) : (
-            <>
-              {name || '선수명'}
-              {/* 💡 한 단어 이름인 경우 바로 옆에 표시 */}
-              {goals > 0 && (
-                <span style={{ fontSize: '10px', marginLeft: '2px', verticalAlign: 'middle' }}>
-                  {'⚽'.repeat(goals)}
-                </span>
+        {(() => {
+          // 미들네임은 건너뛰고 퍼스트, 라스트만 출력
+          const nameParts = name.split(' ').filter(Boolean);
+          let displayName = name;
+          
+          if (nameParts.length > 2) {
+            // 미들네임이 있는 경우: 첫 번째 + 마지막만 사용
+            const first = nameParts[0];
+            const last = nameParts[nameParts.length - 1];
+            displayName = `${first} ${last}`;
+          } else if (nameParts.length === 2) {
+            // 이미 퍼스트, 라스트 형식
+            displayName = name;
+          }
+          
+          const hasMultipleParts = displayName.includes(' ');
+          
+          return (
+            <div 
+              style={{
+                width: '100%',
+                fontSize: fixedFontSize,
+                fontWeight: 800,
+                fontFamily: "NanumSquareNeo, ui-sans-serif, system-ui",
+                textAlign: 'center',
+                whiteSpace: 'normal',
+                wordBreak: hasMultipleParts ? 'break-word' : 'break-all',
+                overflowWrap: 'anywhere',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                lineHeight: '1.2',
+                letterSpacing: '-0.03em', 
+              }}
+            >
+              {hasMultipleParts ? (
+                // 다중 부분 이름: 줄바꿈 처리
+                displayName.split(' ').map((part, i, arr) => (
+                  <React.Fragment key={i}>
+                    {part}
+                    {/* 💡 마지막 부분 우측에 축구공 표시 */}
+                    {i === arr.length - 1 && goals > 0 && (
+                      <span 
+                        style={{ 
+                          fontSize: '14px',       
+                          marginLeft: '4px',       
+                          verticalAlign: 'text-top' 
+                        }}
+                      >
+                        {'⚽'.repeat(goals)}
+                      </span>
+                    )}
+                    {i < arr.length - 1 && <br />}
+                  </React.Fragment>
+                ))
+              ) : (
+                // 단일 이름
+                <>
+                  {displayName || '선수명'}
+                  {/* 💡 한 단어 이름인 경우 바로 옆에 표시 */}
+                  {goals > 0 && (
+                    <span style={{ fontSize: '10px', marginLeft: '2px', verticalAlign: 'middle' }}>
+                      {'⚽'.repeat(goals)}
+                    </span>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          );
+        })()}
       </div>
     </button>
   );

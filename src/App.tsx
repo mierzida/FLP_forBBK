@@ -934,7 +934,7 @@ export default function App() {
   // 자동 갱신 효과
   useEffect(() => {
     if (autoRefreshEnabled && selectedFixtureId && apiKey) {
-      // 30초마다 갱신
+      // 10초마다 갱신
       refreshIntervalRef.current = window.setInterval(() => {
         // 현재 선택된 경기 정보 찾기
         const selectedMatch = liveMatches.find(m => m.fixture.id === selectedFixtureId);
@@ -1141,10 +1141,10 @@ export default function App() {
 
       <div className="flex gap-6 h-[700px] max-h-[90vh]" style={{ height: 700, marginTop: 100 }}>
         {/* Banner */}
-  <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', width: 900, height: 100, zIndex: '1 !important' as any }}>
+  <div style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', width: 900, height: 100, zIndex: 9999 }}>
           <div style={{ width: '100%', height: '100%', background: 'transparent', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ position: 'absolute', width: '900px', height: '100px', borderRadius: 10, overflow: 'hidden', pointerEvents: 'none', zIndex: '0 !important' as any }}>
-              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))', backdropFilter: 'blur(6px) saturate(120%)', WebkitBackdropFilter: 'blur(6px) saturate(120%)', border: '1px solid rgba(255,255,255,0.06)' }} />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(255,255,255,0.3), rgba(5,5,40,0.6))', backdropFilter: 'blur(6px) saturate(120%)', WebkitBackdropFilter: 'blur(3px) saturate(120%)', border: '0.5px solid rgba(0,0,0,0.6)' }} />
               <svg width="100%" height="100%" viewBox="0 0 100 12" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, opacity: 0.06 }}>
                 <defs>
                   <pattern id="p" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(25)">
@@ -1268,8 +1268,8 @@ export default function App() {
                       <PlayerCard 
                         number={player.number} 
                         name={player.name} 
-                        color={uniformColor} 
-                        onClick={() => handlePlayerClick(index)} 
+                        color={uniformColorB} 
+                        onClick={() => handlePlayerClickB(index)} 
                         size={56} 
                         yellowCard={player.yellowCard} 
                         redCard={player.redCard} 
@@ -1377,7 +1377,7 @@ export default function App() {
                           number={player.number} 
                           name={player.name} 
                           color={uniformColorB} 
-                          onClick={() => handlePlayerClick(index)} 
+                          onClick={() => handlePlayerClickB(index)} 
                           size={56} 
                           yellowCard={player.yellowCard} 
                           redCard={player.redCard} 
