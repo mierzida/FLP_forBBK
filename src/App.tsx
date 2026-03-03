@@ -797,55 +797,94 @@ export default function App() {
       const latestFixture = fixtureData.response[0];
       const events = latestFixture.events || []; // 경기 내 모든 이벤트(골, 카드 등) 가져오기
 
-      if (lineupData.response && lineupData.response.length >= 2) {
+      if (lineupData.response && lineupData.response.length >= 2 && fixtureData.response[0]) {
         const homeLineup = lineupData.response[0];
         const awayLineup = lineupData.response[1];
+        const latestFixture = fixtureData.response[0];
+        const allEvents = latestFixture.events || [];
 
-        // 🔍 터미널 디버깅: 경기 내 모든 골 이벤트 추출 및 로깅
-        const allGoalEvents = events.filter((ev: any) => ev.type === 'Goal' && ev.detail !== 'Missed Penalty');
-        console.log("------- ⚽ 경기 득점 데이터 매칭 시작 -------");
-        if (allGoalEvents.length === 0) console.log("기록된 득점 이벤트가 없습니다.");
+        console.log(`------- 🔄 실시간 데이터 분석 시작 (Events: ${allEvents.length}개) -------`);
 
-        // 헬퍼 함수: 선수 매핑 및 2중 매칭 로직 (ID + 이름)
-        const mapPlayersWithLog = (startXI: any[], teamName: string) => startXI.map((p: any, idx: number) => {
-          const pId = p.player.id;
-          const pName = p.player.name;
+        const getLivePlayers = (lineup: any, teamName: string) => {
+          const teamId = Number(lineup.team.id);
+          
+          // 1. 초기 선발 명단 설정
+          let currentXI = lineup.startXI.map((p: any) => ({
+            id: Number(p.player.id),
+            name: p.player.name,
+            number: p.player.number?.toString() || "0"
+          }));
 
-          // 💡 득점 매칭: ID가 일치하거나 이름이 동일한 경우 합산
-          const goalCount = events.filter((ev: any) => 
-            ev.type === 'Goal' && ev.detail !== 'Missed Penalty' &&
-            (String(ev.player.id) === String(pId) || (pName && ev.player.name === pName))
-          ).length;
+          // 2. 교체(subst) 이벤트 처리
+          const substEvents = allEvents
+            .filter((ev: any) => ev.type?.toLowerCase() === 'subst' && Number(ev.team?.id) === teamId)
+            .sort((a: any, b: any) => a.time.elapsed - b.time.elapsed);
 
-          if (goalCount > 0) {
-            console.log(`🎯 [득점자 확인] ${teamName} | ${pName} | ${goalCount}골`);
-          }
+          substEvents.forEach((ev: any) => {
+            const outId = Number(ev.player?.id); // 나가는 선수 (예: 6561 N. Solís)
+            const inId = Number(ev.assist?.id);   // 들어오는 선수 (예: 35845 H. Burbano)
+            const inName = ev.assist?.name;
 
-          // 카드 매칭
-          const hasYellow = events.some((ev: any) => 
-            ev.type === 'Card' && ev.detail.includes('Yellow Card') && (String(ev.player.id) === String(pId) || ev.player.name === pName)
-          );
-          const hasRed = events.some((ev: any) => 
-            ev.type === 'Card' && ev.detail.includes('Red Card') && (String(ev.player.id) === String(pId) || ev.player.name === pName)
-          );
+            if (outId && inId) {
+              const idx = currentXI.findIndex((p: any) => Number(p.id) === outId);
+              if (idx !== -1) {
+                console.log(`🔄 [교체 확인] ${teamName}: ${currentXI[idx].name} ➡️ ${inName}`);
+                
+                // 벤치 명단에서 들어온 선수의 등번호 확인
+                const benchPlayer = lineup.substitutes.find((s: any) => Number(s.player.id) === inId);
+                
+                currentXI[idx] = {
+                  id: inId,
+                  name: inName,
+                  number: benchPlayer?.player.number?.toString() || currentXI[idx].number
+                };
+              }
+            }
+          });
 
-          return {
-            number: p.player.number?.toString() || (idx + 1).toString(),
-            name: pName || `선수 ${idx + 1}`,
-            yellowCard: hasYellow,
-            redCard: hasRed,
-            goals: goalCount
-          };
-        });
+          // 3. 최종 명단에 득점/카드 매핑 (교체된 선수 포함)
+          return currentXI.map((p: any, idx: number) => {
+            const pId = Number(p.id);
+            const pName = p.name;
+
+            // 득점 매칭
+            const goalCount = allEvents.filter((ev: any) => 
+              ev.type?.toLowerCase() === 'goal' && 
+              (Number(ev.player?.id) === pId || (pName && ev.player?.name === pName))
+            ).length;
+
+            // 카드 매칭 (예: 90분 Hernán Burbano 레드카드 감지)
+            const hasYellow = allEvents.some((ev: any) => 
+              ev.type?.toLowerCase() === 'card' && 
+              ev.detail?.toLowerCase().includes('yellow card') && 
+              (Number(ev.player?.id) === pId || ev.player?.name === pName)
+            );
+            const hasRed = allEvents.some((ev: any) => 
+              ev.type?.toLowerCase() === 'card' && 
+              ev.detail?.toLowerCase().includes('red card') && 
+              (Number(ev.player?.id) === pId || ev.player?.name === pName)
+            );
+
+            return {
+              number: p.number || (idx + 1).toString(),
+              name: pName || `선수 ${idx + 1}`,
+              yellowCard: hasYellow,
+              redCard: hasRed,
+              goals: goalCount
+            };
+          });
+        };
+
+        // 4. 홈/어웨이 선수 상태 업데이트
 
         // 홈팀 (팀 A) 설정
         const homeFormationStr = homeLineup.formation || '4-3-3';
-        const homePlayers = mapPlayersWithLog(homeLineup.startXI, "HOME");
+        const homePlayers = getLivePlayers(homeLineup, "HOME");;
         const homeFormation: Formation = { name: homeFormationStr, lines: parseFormation(homeFormationStr) };
 
         // 어웨이팀 (팀 B) 설정
         const awayFormationStr = awayLineup.formation || '4-3-3';
-        const awayPlayers = mapPlayersWithLog(awayLineup.startXI, "AWAY");
+        const awayPlayers = getLivePlayers(awayLineup, "AWAY");
         const awayFormation: Formation = { name: awayFormationStr, lines: parseFormation(awayFormationStr) };
 
         console.log("---------------------------------------");
