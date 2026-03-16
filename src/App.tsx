@@ -723,7 +723,7 @@ export default function App() {
    * API-Football Integration *
    ***************************/
   
-  // 실시간, 예정, 종료 경기 목록 통합 가져오기 (EPL, 분데스리가 필터 적용)
+  // 실시간, 예정, 종료 경기 목록 통합 가져오기
   const loadLiveMatches = async () => {
     if (!apiKey.trim()) {
       alert('API 키를 입력하세요');
@@ -842,26 +842,25 @@ export default function App() {
             }
           });
 
-          // 3. 최종 명단에 득점/카드 매핑 (교체된 선수 포함)
+          // 3. 최종 명단에 득점/카드 매핑 (실축 및 취소 로직 강화)
           return currentXI.map((p: any, idx: number) => {
             const pId = Number(p.id);
             const pName = p.name;
 
-            // 득점 매칭
-            const goalCount = allEvents.filter((ev: any) => 
-              ev.type?.toLowerCase() === 'goal' && 
-              (Number(ev.player?.id) === pId || (pName && ev.player?.name === pName))
-            ).length;
+            // 득점 매칭: 실축(Missed Penalty) 및 취소(Cancelled Goal) 제외
+            const goalCount = allEvents.filter((ev: any) => {
+              const isGoal = ev.type?.toLowerCase() === 'goal';
+              const isValid = ev.detail !== 'Missed Penalty' && ev.detail !== 'Cancelled Goal';
+              const isThisPlayer = Number(ev.player?.id) === pId || (pName && ev.player?.name === pName);
+              return isGoal && isValid && isThisPlayer;
+            }).length;
 
-            // 카드 매칭 (예: 90분 Hernán Burbano 레드카드 감지)
             const hasYellow = allEvents.some((ev: any) => 
-              ev.type?.toLowerCase() === 'card' && 
-              ev.detail?.toLowerCase().includes('yellow card') && 
+              ev.type?.toLowerCase() === 'card' && ev.detail?.toLowerCase().includes('yellow card') && 
               (Number(ev.player?.id) === pId || ev.player?.name === pName)
             );
             const hasRed = allEvents.some((ev: any) => 
-              ev.type?.toLowerCase() === 'card' && 
-              ev.detail?.toLowerCase().includes('red card') && 
+              ev.type?.toLowerCase() === 'card' && ev.detail?.toLowerCase().includes('red card') && 
               (Number(ev.player?.id) === pId || ev.player?.name === pName)
             );
 
