@@ -41,6 +41,8 @@ interface ElectronAPI {
   openFile?: () => Promise<{ canceled?: boolean; filePath?: string; error?: string; data?: any } | undefined>;
   captureAndSave?: (opts: any) => Promise<{ canceled?: boolean; filePath?: string } | undefined>;
   broadcastPlayerCoordinates?: (data: any) => Promise<void>;
+  getUdpPort?: () => Promise<{ port?: number } | undefined>;
+  setUdpPort?: (port: number) => Promise<{ success?: boolean; error?: string; port?: number } | undefined>;
   setTransparentMode?: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   getTransparentMode?: () => Promise<{ success: boolean; transparent: boolean }>;
   minimize?: () => void;
@@ -49,9 +51,17 @@ interface ElectronAPI {
 }
 
 const MOVEMENT_THRESHOLD = 6; // px
+const DEFAULT_UDP_PORT = 9107;
 
 function clamp01(v: number) {
   return Math.max(0, Math.min(100, v));
+}
+
+function parseUdpPort(value: string | number | null | undefined): number | null {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < 1 || parsed > 65535) return null;
+  return parsed;
 }
 
 function calcPositions(formation: Formation): { x: number; y: number }[] {
@@ -136,6 +146,32 @@ function convertLogoPathToURL(logoPath: string | null): string | null {
   return `${HTTP_SERVER_URL}/${logoPath}`;
 }
 
+const STAT_KEYS = [
+  'Total Shots',
+  'Shots on Goal',
+  'Corner Kicks',
+  'Fouls',
+  'Offsides',
+  'Yellow Cards',
+  'Red Cards',
+  'Ball Possession',
+] as const;
+
+interface StatEntry {
+  type: string;
+  value: string;
+}
+
+function parseTeamStats(statsResponse: any[], teamIndex: number): StatEntry[] {
+  if (!statsResponse || statsResponse.length <= teamIndex) return [];
+  const stats: any[] = statsResponse[teamIndex]?.statistics || [];
+  return STAT_KEYS.map((key) => {
+    const stat = stats.find((s: any) => s.type === key);
+    const raw = stat?.value ?? null;
+    return { type: key, value: raw !== null ? String(raw) : '0' };
+  });
+}
+
 // 좌표 데이터를 소켓으로 전송하는 함수
 function broadcastCurrentPlayerPositions(
   formation: Formation,
@@ -153,7 +189,9 @@ function broadcastCurrentPlayerPositions(
   teamLogoB: any,
   matchTime?: string | null,
   matchStatus?: string | null,
-  electronAPI?: ElectronAPI
+  electronAPI?: ElectronAPI,
+  statsA?: StatEntry[],
+  statsB?: StatEntry[]
 ) {
   if (!electronAPI?.broadcastPlayerCoordinates) return;
 
@@ -256,6 +294,10 @@ function broadcastCurrentPlayerPositions(
       teams: {
         A: teamAPositions,
         B: teamBPositions
+      },
+      stats: {
+        A: statsA || [],
+        B: statsB || []
       }
     };
 
@@ -292,6 +334,9 @@ export default function App() {
   const [scoreA, setScoreA] = useState<number>(0);
   const [scoreB, setScoreB] = useState<number>(0);
 
+  const [matchStatsA, setMatchStatsA] = useState<StatEntry[]>([]);
+  const [matchStatsB, setMatchStatsB] = useState<StatEntry[]>([]);
+
   const [verticalMode, setVerticalMode] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
   const [editingPlayer, setEditingPlayer] = useState<Player>({ number: '', name: '', yellowCard: false, redCard: false });
@@ -307,6 +352,14 @@ export default function App() {
       return localStorage.getItem('api-football-key') || '';
     } catch {
       return '';
+    }
+  });
+  const [udpPortInput, setUdpPortInput] = useState(() => {
+    try {
+      const savedPort = parseUdpPort(localStorage.getItem('udp-port'));
+      return String(savedPort ?? DEFAULT_UDP_PORT);
+    } catch {
+      return String(DEFAULT_UDP_PORT);
     }
   });
   const [showLiveMatches, setShowLiveMatches] = useState(false);
@@ -388,33 +441,18 @@ export default function App() {
 
   // 선수 정보 변경 시 데이터 전송
   useEffect(() => {
-    // 초기 마운트 시에는 전송하지 않음
     if (isInitialMount.current) return;
 
-    // 선수 정보 변경 후 100ms 후 전송 (디바운싱)
     if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
     broadcastTimerRef.current = window.setTimeout(() => {
       broadcastCurrentPlayerPositions(
-        formation,
-        formationB,
-        players,
-        playersB,
-        overrides,
-        overridesB,
-        verticalMode,
-        scoreA,
-        scoreB,
-        teamNameA,
-        teamNameB,
-        teamLogoA,
-        teamLogoB,
-        null,
-        null,
-        electronAPI
+        formation, formationB, players, playersB, overrides, overridesB,
+        verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB,
+        null, null, electronAPI, matchStatsA, matchStatsB
       );
       broadcastTimerRef.current = null;
     }, 100);
-  }, [players, playersB]); // 선수 배열 변경 감지
+  }, [players, playersB]);
 
   // API 키 저장
   useEffect(() => {
@@ -427,62 +465,91 @@ export default function App() {
     }
   }, [apiKey]);
 
+  // UDP 전송 포트 초기화 (기본 9107, 저장값 우선)
+  useEffect(() => {
+    let cancelled = false;
+
+    const initUdpPort = async () => {
+      let targetPort = DEFAULT_UDP_PORT;
+      const savedPort = parseUdpPort(udpPortInput);
+      if (savedPort !== null) targetPort = savedPort;
+
+      try {
+        if (electronAPI?.setUdpPort) {
+          const res = await electronAPI.setUdpPort(targetPort);
+          const confirmed = parseUdpPort(res?.port);
+          if (!cancelled && confirmed !== null) {
+            setUdpPortInput(String(confirmed));
+          }
+        }
+      } catch (error) {
+        // ignore: local preview/browser mode or unavailable IPC
+      }
+    };
+
+    void initUdpPort();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyUdpPort = useCallback(async () => {
+    const parsedPort = parseUdpPort(udpPortInput);
+    if (parsedPort === null) {
+      alert('포트는 1~65535 사이의 숫자여야 합니다.');
+      return;
+    }
+
+    try {
+      localStorage.setItem('udp-port', String(parsedPort));
+    } catch (error) {
+      // ignore localStorage errors
+    }
+
+    if (!electronAPI?.setUdpPort) return;
+
+    try {
+      const res = await electronAPI.setUdpPort(parsedPort);
+      if (res?.success === false) {
+        alert('UDP 포트 적용에 실패했습니다.');
+        return;
+      }
+      const confirmed = parseUdpPort(res?.port);
+      if (confirmed !== null) {
+        setUdpPortInput(String(confirmed));
+      }
+    } catch (error) {
+      alert('UDP 포트 적용에 실패했습니다.');
+    }
+  }, [udpPortInput, electronAPI]);
+
   // 팀 이름 변경 시 데이터 전송
   useEffect(() => {
-    // 초기 마운트 시에는 전송하지 않음
     if (isInitialMount.current) return;
 
-    // 팀 이름 변경 후 즉시 전송
     setTimeout(() => {
       broadcastCurrentPlayerPositions(
-        formation,
-        formationB,
-        players,
-        playersB,
-        overrides,
-        overridesB,
-        verticalMode,
-        scoreA,
-        scoreB,
-        teamNameA,
-        teamNameB,
-        teamLogoA,
-        teamLogoB,
-        null,
-        null,
-        electronAPI
+        formation, formationB, players, playersB, overrides, overridesB,
+        verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB,
+        null, null, electronAPI, matchStatsA, matchStatsB
       );
     }, 0);
-  }, [teamNameA, teamNameB]); // 팀 이름 변경 감지
+  }, [teamNameA, teamNameB]);
 
   // 스코어 변경 시 데이터 전송
   useEffect(() => {
-    // 초기 마운트 시에는 전송하지 않음
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
 
-    // 스코어 변경 후 100ms 후 전송 (디바운싱)
     if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
     broadcastTimerRef.current = window.setTimeout(() => {
       broadcastCurrentPlayerPositions(
-        formation,
-        formationB,
-        players,
-        playersB,
-        overrides,
-        overridesB,
-        verticalMode,
-        scoreA,
-        scoreB,
-        teamNameA,
-        teamNameB,
-        teamLogoA,
-        teamLogoB,
-        null,
-        null,
-        electronAPI
+        formation, formationB, players, playersB, overrides, overridesB,
+        verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB,
+        null, null, electronAPI, matchStatsA, matchStatsB
       );
       broadcastTimerRef.current = null;
     }, 100);
@@ -633,9 +700,8 @@ export default function App() {
     setFormation(newFormation);
     setOverrides({}); // reset manual drags
 
-    // 포메이션 변경 후 좌표 데이터 전송
     setTimeout(() => {
-      broadcastCurrentPlayerPositions(newFormation, formationB, newPlayers, playersB, {}, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+      broadcastCurrentPlayerPositions(newFormation, formationB, newPlayers, playersB, {}, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI, matchStatsA, matchStatsB);
     }, 0);
   };
 
@@ -649,9 +715,8 @@ export default function App() {
     setFormationB(newFormation);
     setOverridesB({});
 
-    // 포메이션 변경 후 좌표 데이터 전송
     setTimeout(() => {
-      broadcastCurrentPlayerPositions(formation, newFormation, players, newPlayers, overrides, {}, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+      broadcastCurrentPlayerPositions(formation, newFormation, players, newPlayers, overrides, {}, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI, matchStatsA, matchStatsB);
     }, 0);
   };
 
@@ -723,7 +788,7 @@ export default function App() {
    * API-Football Integration *
    ***************************/
   
-  // 실시간, 예정, 종료 경기 목록 통합 가져오기
+  // 실시간, 예정, 종료 경기 목록 통합 가져오기 (EPL, 분데스리가 필터 적용)
   const loadLiveMatches = async () => {
     if (!apiKey.trim()) {
       alert('API 키를 입력하세요');
@@ -777,25 +842,23 @@ export default function App() {
     }
     
     try {
-      // 라인업 데이터 가져오기
-      const lineupResponse = await fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`, {
-        headers: {
-          'x-apisports-key': apiKey
-        }
-      });
+      const headers = { 'x-apisports-key': apiKey };
 
-      const lineupData = await lineupResponse.json();
-      
-      // 최신 경기 정보 (스코어, 상태) 가져오기
-      const fixtureResponse = await fetch(`https://v3.football.api-sports.io/fixtures?id=${fixtureId}`, {
-        headers: {
-          'x-apisports-key': apiKey
-        }
-      });
+      // 라인업, 경기 정보, 통계 병렬 요청
+      const [lineupResponse, fixtureResponse, statsResponse] = await Promise.all([
+        fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${fixtureId}`, { headers }),
+        fetch(`https://v3.football.api-sports.io/fixtures?id=${fixtureId}`, { headers }),
+        fetch(`https://v3.football.api-sports.io/fixtures/statistics?fixture=${fixtureId}`, { headers }),
+      ]);
 
-      const fixtureData = await fixtureResponse.json();
+      const [lineupData, fixtureData, statsData] = await Promise.all([
+        lineupResponse.json(),
+        fixtureResponse.json(),
+        statsResponse.json(),
+      ]);
+
       const latestFixture = fixtureData.response[0];
-      const events = latestFixture.events || []; // 경기 내 모든 이벤트(골, 카드 등) 가져오기
+      const events = latestFixture.events || [];
 
       if (lineupData.response && lineupData.response.length >= 2 && fixtureData.response[0]) {
         const homeLineup = lineupData.response[0];
@@ -842,25 +905,26 @@ export default function App() {
             }
           });
 
-          // 3. 최종 명단에 득점/카드 매핑 (실축 및 취소 로직 강화)
+          // 3. 최종 명단에 득점/카드 매핑 (교체된 선수 포함)
           return currentXI.map((p: any, idx: number) => {
             const pId = Number(p.id);
             const pName = p.name;
 
-            // 득점 매칭: 실축(Missed Penalty) 및 취소(Cancelled Goal) 제외
-            const goalCount = allEvents.filter((ev: any) => {
-              const isGoal = ev.type?.toLowerCase() === 'goal';
-              const isValid = ev.detail !== 'Missed Penalty' && ev.detail !== 'Cancelled Goal';
-              const isThisPlayer = Number(ev.player?.id) === pId || (pName && ev.player?.name === pName);
-              return isGoal && isValid && isThisPlayer;
-            }).length;
+            // 득점 매칭
+            const goalCount = allEvents.filter((ev: any) => 
+              ev.type?.toLowerCase() === 'goal' && 
+              (Number(ev.player?.id) === pId || (pName && ev.player?.name === pName))
+            ).length;
 
+            // 카드 매칭 (예: 90분 Hernán Burbano 레드카드 감지)
             const hasYellow = allEvents.some((ev: any) => 
-              ev.type?.toLowerCase() === 'card' && ev.detail?.toLowerCase().includes('yellow card') && 
+              ev.type?.toLowerCase() === 'card' && 
+              ev.detail?.toLowerCase().includes('yellow card') && 
               (Number(ev.player?.id) === pId || ev.player?.name === pName)
             );
             const hasRed = allEvents.some((ev: any) => 
-              ev.type?.toLowerCase() === 'card' && ev.detail?.toLowerCase().includes('red card') && 
+              ev.type?.toLowerCase() === 'card' && 
+              ev.detail?.toLowerCase().includes('red card') && 
               (Number(ev.player?.id) === pId || ev.player?.name === pName)
             );
 
@@ -922,9 +986,16 @@ export default function App() {
         const newScoreB = latestFixture.goals.away || 0;
         const matchElapsedFormatted = formatMatchTime(latestFixture.fixture.status.elapsed);
         const matchStatus = latestFixture.fixture.status.short;
-        
+
+        // 통계 파싱 (홈=index 0, 어웨이=index 1)
+        const statsRaw = statsData.response || [];
+        const newStatsA = parseTeamStats(statsRaw, 0);
+        const newStatsB = parseTeamStats(statsRaw, 1);
+
         setScoreA(newScoreA);
         setScoreB(newScoreB);
+        setMatchStatsA(newStatsA);
+        setMatchStatsB(newStatsB);
 
         // 데이터 전송
         setTimeout(() => {
@@ -932,7 +1003,8 @@ export default function App() {
             homeFormation, awayFormation, homePlayers, awayPlayers,
             isAutoRefresh ? overrides : {}, isAutoRefresh ? overridesB : {},
             verticalMode, newScoreA, newScoreB, homeTeam.name, awayTeam.name,
-            homeLogoData, awayLogoData, matchElapsedFormatted, matchStatus, electronAPI
+            homeLogoData, awayLogoData, matchElapsedFormatted, matchStatus, electronAPI,
+            newStatsA, newStatsB
           );
         }, 100);
 
@@ -1060,12 +1132,11 @@ export default function App() {
         singleClickTimerRef.current = null;
       }, 250);
     } else {
-      // 드래그가 끝난 후 좌표 데이터 전송 (디바운싱 적용)
       if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
       broadcastTimerRef.current = window.setTimeout(() => {
-        broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+        broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI, matchStatsA, matchStatsB);
         broadcastTimerRef.current = null;
-      }, 100); // 100ms 디바운싱
+      }, 100);
     }
   };
 
@@ -1117,12 +1188,11 @@ export default function App() {
         singleClickTimerRefB.current = null;
       }, 250);
     } else {
-      // 드래그가 끝난 후 좌표 데이터 전송 (디바운싱 적용)
       if (broadcastTimerRef.current) window.clearTimeout(broadcastTimerRef.current);
       broadcastTimerRef.current = window.setTimeout(() => {
-        broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+        broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, verticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI, matchStatsA, matchStatsB);
         broadcastTimerRef.current = null;
-      }, 100); // 100ms 디바운싱
+      }, 100);
     }
   };
 
@@ -1157,9 +1227,8 @@ export default function App() {
             <Button onClick={() => {
               const newVerticalMode = !verticalMode;
               setVerticalMode(newVerticalMode);
-              // 세로 모드 변경 후 좌표 데이터 전송
               setTimeout(() => {
-                broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, newVerticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI);
+                broadcastCurrentPlayerPositions(formation, formationB, players, playersB, overrides, overridesB, newVerticalMode, scoreA, scoreB, teamNameA, teamNameB, teamLogoA, teamLogoB, null, null, electronAPI, matchStatsA, matchStatsB);
               }, 0);
             }} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }}>{verticalMode ? '가로모드' : '세로모드'}</Button>
             <Button onClick={handleSwapTeams} className="px-3 py-1 app-no-drag" style={{ border: '2px solid #e6e6e6', background: '#ffffff', color: '#111' }} title="팀 A와 팀 B 정보 교환">⇄ 팀교환</Button>
@@ -1596,6 +1665,33 @@ export default function App() {
               />
               <p className="text-sm text-gray-500">
                 API-Football (api-sports.io)에서 발급받은 API 키를 입력하세요.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="udp-port">UDP 전송 포트</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="udp-port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={udpPortInput}
+                  onChange={(e) => setUdpPortInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void applyUdpPort();
+                    }
+                  }}
+                  placeholder="9107"
+                />
+                <Button type="button" variant="outline" onClick={() => void applyUdpPort()}>
+                  적용
+                </Button>
+              </div>
+              <p className="text-sm text-gray-500">
+                기본 포트는 9107이며, 적용 후부터 해당 포트로 소켓 데이터를 전송합니다.
               </p>
             </div>
 
