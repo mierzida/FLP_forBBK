@@ -373,6 +373,27 @@ export default function App() {
   // 프리미어리그, 분데스리가 위주로 필터링
   const [activeTab, setActiveTab] = useState<'UPCOMING' | 'LIVE' | 'FINISHED'>('LIVE');
   const LEAGUE_IDS = [39, 78]; // 39: EPL, 78: Bundesliga 1
+  const SUPPORTED_COUNTRIES = [
+    'england', 'uk', 'united kingdom',
+    'france', 'germany', 'italy', 'turkey',
+    'south korea', 'korea republic', 'korea',
+    'japan',
+    'usa', 'united states', 'united states of america'
+  ];
+
+  const isTargetLeague = (league: any) => {
+    if (!league || !league.country || !league.name) return false;
+    const country = String(league.country).toLowerCase();
+    const leagueName = String(league.name).toLowerCase();
+
+    const internationalKeywords = ['friendly', 'international', 'nations', 'world cup', 'world'];
+    const isInternational = internationalKeywords.some((kw) => leagueName.includes(kw)) || country === 'world';
+
+    if (isInternational) return true;
+    if (SUPPORTED_COUNTRIES.includes(country)) return true;
+    return false;
+  };
+
 
   /********
    * Refs *
@@ -390,6 +411,9 @@ export default function App() {
   // make sure overrides state exist before snapshot usage
   const [overrides, setOverrides] = useState<Record<number, { x: number; y: number }>>({});
   const [overridesB, setOverridesB] = useState<Record<number, { x: number; y: number }>>({});
+
+  const getDefaultPlayers = (count: number = 11): Player[] =>
+    Array.from({ length: count }, (_, idx) => ({ number: String(idx + 1), name: `선수 ${idx + 1}` }));
 
   // Ensure document background is always transparent
   useEffect(() => {
@@ -1017,7 +1041,64 @@ export default function App() {
           console.log(`🔄 자동 갱신 완료: ${homeTeam.name} vs ${awayTeam.name}`);
         }
       } else {
-        if (!isAutoRefresh) alert('라인업 정보를 찾을 수 없습니다.');
+        // 라인업 정보가 없을 때: 팀명/로고만 반영하고 선수는 빈 상태로 유지
+        const homeLogoData = {
+          id: `api/${homeTeam.id}`,
+          slug: homeTeam.name.toLowerCase().replace(/\s+/g, '-'),
+          country: homeTeam.country || 'unknown',
+          englishName: homeTeam.name,
+          logos: { svg: null, png: homeTeam.logo }
+        };
+
+        const awayLogoData = {
+          id: `api/${awayTeam.id}`,
+          slug: awayTeam.name.toLowerCase().replace(/\s+/g, '-'),
+          country: awayTeam.country || 'unknown',
+          englishName: awayTeam.name,
+          logos: { svg: null, png: awayTeam.logo }
+        };
+
+        const emptyFormation: Formation = { name: '4-3-3', lines: [1, 4, 3, 3] };
+
+        setTeamNameA(homeTeam.name);
+        setTeamLogoA(homeLogoData);
+        setFormation(emptyFormation);
+        setPlayers(getDefaultPlayers());
+        setOverrides({});
+
+        setTeamNameB(awayTeam.name);
+        setTeamLogoB(awayLogoData);
+        setFormationB(emptyFormation);
+        setPlayersB(getDefaultPlayers());
+        setOverridesB({});
+
+        const newScoreA = score?.home || 0;
+        const newScoreB = score?.away || 0;
+        const matchElapsedFormatted = latestFixture?.fixture?.status?.elapsed ? formatMatchTime(latestFixture.fixture.status.elapsed) : null;
+        const matchStatus = latestFixture?.fixture?.status?.short ?? null;
+
+        setScoreA(newScoreA);
+        setScoreB(newScoreB);
+        setMatchStatsA([]);
+        setMatchStatsB([]);
+
+        setTimeout(() => {
+          broadcastCurrentPlayerPositions(
+            emptyFormation, emptyFormation, [], [], {}, {},
+            verticalMode, newScoreA, newScoreB, homeTeam.name, awayTeam.name,
+            homeLogoData, awayLogoData, matchElapsedFormatted, matchStatus, electronAPI,
+            [], []
+          );
+        }, 100);
+
+        if (!isAutoRefresh) {
+          setSelectedFixtureId(fixtureId);
+          setAutoRefreshEnabled(true);
+          setShowLiveMatches(false);
+          alert(`${homeTeam.name} vs ${awayTeam.name} 라인업 정보가 현재 미제공입니다. 팀 기본 정보만 적용 후 10초 자동재조회 시작`);
+        } else {
+          console.log(`🔄 자동 갱신 - 라인업 미제공 상태: ${homeTeam.name} vs ${awayTeam.name}`);
+        }
       }
     } catch (error) {
       console.error('Failed to load lineup:', error);
@@ -1272,7 +1353,9 @@ export default function App() {
                     <div style={{ width: 56, height: 56, borderRadius: 8, background: '#ffffff22' }} />
                   )}
                 </div>
-                <div style={{ color: '#fff', fontWeight: 700, fontSize: 'clamp(14px, 1.6vw, 20px)' }}>{teamNameA || 'Team A'}</div>
+                <div style={{ color: '#fff', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ fontWeight: 700, fontSize: 'clamp(14px, 1.6vw, 20px)' }}>{teamNameA || 'Team A'}</div>
+                </div>
               </div>
 
               {/* Center: Score */}
@@ -1286,7 +1369,9 @@ export default function App() {
 
               {/* Right: Team B */}
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end', paddingRight: 18 }}>
-                <div style={{ color: '#fff', fontWeight: 700, fontSize: 'clamp(14px, 1.6vw, 20px)', textAlign: 'right' }}>{teamNameB || 'Team B'}</div>
+                <div style={{ color: '#fff', display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'right' }}>
+                  <div style={{ fontWeight: 700, fontSize: 'clamp(14px, 1.6vw, 20px)' }}>{teamNameB || 'Team B'}</div>
+                </div>
                 <div style={{ width: 72, height: 72, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {teamLogoB ? (
                     <img src={teamLogoB.logos.png ?? teamLogoB.logos.svg} alt={teamLogoB.englishName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
